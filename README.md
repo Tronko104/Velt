@@ -1,6 +1,8 @@
 # Velt
 
-A frameless Linux terminal emulator built with **Tauri v2**, **xterm.js**, and **OpenCode** featuring an on-demand **Agent Mode** inside a unified scrollback buffer.
+A **vibe-coded**, frameless Linux terminal emulator built with **Tauri v2**, **xterm.js**, and **OpenCode** featuring an on-demand **Agent Mode** inside a unified scrollback buffer.
+
+> **Note**: This project is vibe-coded (developed iteratively with AI coding agents). Prebuilt Linux packages (`.AppImage`, `.deb`, `.rpm`) are published on the [Releases](https://github.com/Tronko104/Velt/releases) page.
 
 ## Key Features
 

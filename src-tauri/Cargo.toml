@@ -1,7 +1,7 @@
 [package]
 name = "velt"
 version = "0.1.0"
-description = "Velt — Terminal emulator with on-demand OpenCode Agent Mode"
+description = "Velt — Vibe-coded frameless Linux terminal emulator with on-demand OpenCode Agent Mode"
 authors = ["Velt"]
 edition = "2021"
 
