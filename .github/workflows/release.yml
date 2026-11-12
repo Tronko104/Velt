@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwayland-dev \
+            libx11-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend and run unit tests
+        run: |
+          npm run build
+          node --test tests/redact_and_i18n.test.ts
+
+      - name: Run Rust tests
+        run: cargo test
+        working-directory: src-tauri
+
+      - name: Build Linux bundles (.AppImage, .deb, .rpm) and publish Release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: "v__VERSION__"
+          releaseName: "Velt v__VERSION__"
+          releaseBody: |
+            Vibe-coded frameless Linux terminal emulator with on-demand OpenCode Agent Mode.
+
+            Linux packages attached:
+            - `.AppImage` (universal Linux portable bundle)
+            - `.deb` (Debian / Ubuntu)
+            - `.rpm` (Fedora / RHEL / openSUSE)
+          releaseDraft: false
+          prerelease: false
