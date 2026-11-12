@@ -42,7 +42,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "velt-obsidian",
     name: "Velt Obsidian",
-    tagline: "Nero ossidiana & ciano elettrico",
+    tagline: "Obsidian black & electric cyan",
     bg: "#141517",
     surface: "#1a1c20",
     surface2: "#22262c",
@@ -79,7 +79,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "tokyo-night",
     name: "Tokyo Night",
-    tagline: "Notte zaffiro & indaco neon",
+    tagline: "Sapphire night & neon indigo",
     bg: "#1a1b26",
     surface: "#1f2335",
     surface2: "#292e42",
@@ -116,7 +116,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "catppuccin-mocha",
     name: "Catppuccin Mocha",
-    tagline: "Lavanda vellutata & toni pastello",
+    tagline: "Velvet lavender & pastel tones",
     bg: "#1e1e2e",
     surface: "#242437",
     surface2: "#313244",
@@ -153,7 +153,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "nord",
     name: "Nord Arctic",
-    tagline: "Ghiaccio polare & ardesia nordica",
+    tagline: "Polar ice & Nordic slate",
     bg: "#242933",
     surface: "#2e3440",
     surface2: "#3b4252",
@@ -190,7 +190,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "gruvbox-dark",
     name: "Gruvbox Amber",
-    tagline: "Grafite calda & oro retrò",
+    tagline: "Warm graphite & retro gold",
     bg: "#1d2021",
     surface: "#282828",
     surface2: "#32302f",
@@ -227,7 +227,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "rose-pine",
     name: "Rosé Pine",
-    tagline: "Inchiostro prugna & oro rosa",
+    tagline: "Plum ink & rose gold",
     bg: "#191724",
     surface: "#1f1d2e",
     surface2: "#26233a",
@@ -264,7 +264,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "dracula",
     name: "Dracula Violet",
-    tagline: "Viola gotico & menta brillante",
+    tagline: "Gothic violet & bright mint",
     bg: "#1e1f29",
     surface: "#282a36",
     surface2: "#343746",
@@ -301,7 +301,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "kanagawa",
     name: "Kanagawa Wave",
-    tagline: "Inchiostro giapponese & onde blu",
+    tagline: "Japanese ink & blue waves",
     bg: "#1f1f28",
     surface: "#252532",
     surface2: "#2d2d3d",
@@ -338,7 +338,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "monokai-pro",
     name: "Monokai Pro",
-    tagline: "Antracite editoriale & oro vivo",
+    tagline: "Editorial charcoal & vivid gold",
     bg: "#1c1b1d",
     surface: "#262427",
     surface2: "#322f33",
@@ -375,7 +375,7 @@ export const VELT_THEMES: VeltTheme[] = [
   {
     id: "solarized-dark",
     name: "Solarized Deep",
-    tagline: "Petrolio classico & verde acqua",
+    tagline: "Classic teal & seafoam green",
     bg: "#002b36",
     surface: "#073642",
     surface2: "#0d4352",
@@ -413,6 +413,26 @@ export const VELT_THEMES: VeltTheme[] = [
 
 export function getThemeById(id: string | undefined | null): VeltTheme {
   return VELT_THEMES.find((t) => t.id === id) || VELT_THEMES[0];
+}
+
+const THEME_TAGLINES_IT: Record<string, string> = {
+  "velt-obsidian": "Nero ossidiana & ciano elettrico",
+  "tokyo-night": "Notte zaffiro & indaco neon",
+  "catppuccin-mocha": "Lavanda vellutata & toni pastello",
+  "nord": "Ghiaccio polare & ardesia nordica",
+  "gruvbox-dark": "Grafite calda & oro retrò",
+  "rose-pine": "Inchiostro prugna & oro rosa",
+  "dracula": "Viola gotico & menta brillante",
+  "kanagawa": "Inchiostro giapponese & onde blu",
+  "monokai-pro": "Antracite editoriale & oro vivo",
+  "solarized-dark": "Petrolio classico & verde acqua",
+};
+
+export function getThemeTagline(theme: VeltTheme, locale: "it" | "en"): string {
+  if (locale === "it") {
+    return THEME_TAGLINES_IT[theme.id] || theme.tagline;
+  }
+  return theme.tagline;
 }
 
 export function hexToRgbTriplet(hex: string): string {

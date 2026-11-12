@@ -1,3 +1,4 @@
+import { STRINGS, type AppLocale } from "../i18n";
 import type { ModelInfo, Preset, VeltConfig } from "../types";
 import { iconCpu, veltLogoSvg } from "./icons";
 
@@ -9,12 +10,20 @@ export interface SwitcherResult {
 
 export class ModelSwitcherModal {
   private overlay: HTMLDivElement;
+  private modalEl: HTMLDivElement;
+  private titleEl: HTMLSpanElement;
+  private hintEl: HTMLSpanElement;
   private searchInput: HTMLInputElement;
   private presetsRow: HTMLDivElement;
   private listEl: HTMLDivElement;
+  private effortLabelEl: HTMLSpanElement;
   private effortRow: HTMLDivElement;
   private defaultCheck: HTMLInputElement;
+  private defaultLabelEl: HTMLSpanElement;
+  private cancelBtn: HTMLButtonElement;
+  private applyBtn: HTMLButtonElement;
 
+  private locale: AppLocale = "en";
   private models: ModelInfo[] = [];
   private config!: VeltConfig;
   private selectedModel = "";
@@ -27,26 +36,27 @@ export class ModelSwitcherModal {
   constructor(root: HTMLElement) {
     this.overlay = document.createElement("div");
     this.overlay.className = "velt-modal-backdrop hidden";
+    const s = STRINGS[this.locale].switcher;
     this.overlay.innerHTML = `
-      <div class="velt-modal velt-switcher" role="dialog" aria-label="Modello e Reasoning Effort">
+      <div class="velt-modal velt-switcher" role="dialog" aria-label="${escapeHtml(s.ariaLabel)}">
         <div class="velt-modal-header">
           <div class="velt-modal-title">
             ${veltLogoSvg(20)}
-            <span>Modello &amp; Reasoning Effort</span>
+            <span data-role="title">${escapeHtml(s.title)}</span>
           </div>
-          <span class="velt-kbd-hint">↑↓ modello · ←→ effort · Invio applica · Esc chiudi</span>
+          <span class="velt-kbd-hint" data-role="kbd-hint">${escapeHtml(s.kbdHint)}</span>
         </div>
 
         <div class="velt-presets-strip" data-role="presets"></div>
 
         <div class="velt-search-wrap">
-          <input type="text" class="velt-input" data-role="search" placeholder="Cerca modello (es. deepseek, gemma, nemotron, flint)..." />
+          <input type="text" class="velt-input" data-role="search" placeholder="${escapeHtml(s.searchPlaceholder)}" />
         </div>
 
         <div class="velt-model-list" data-role="list"></div>
 
         <div class="velt-effort-panel">
-          <div class="velt-effort-label">${iconCpu(13)} <span>Sforzo di ragionamento (Reasoning Effort)</span></div>
+          <div class="velt-effort-label">${iconCpu(13)} <span data-role="effort-label">${escapeHtml(s.effortLabel)}</span></div>
           <div class="velt-effort-chips" data-role="efforts"></div>
         </div>
 
@@ -56,11 +66,11 @@ export class ModelSwitcherModal {
               <input type="checkbox" data-role="save-default" />
               <span class="velt-switch-track"><span class="velt-switch-thumb"></span></span>
             </span>
-            <span>Imposta anche come combinazione predefinita</span>
+            <span data-role="default-label">${escapeHtml(s.setDefault)}</span>
           </label>
           <div class="velt-footer-actions">
-            <button type="button" class="velt-btn velt-btn-ghost" data-action="cancel">Annulla</button>
-            <button type="button" class="velt-btn velt-btn-primary" data-action="apply">Applica</button>
+            <button type="button" class="velt-btn velt-btn-ghost" data-action="cancel">${escapeHtml(s.cancel)}</button>
+            <button type="button" class="velt-btn velt-btn-primary" data-action="apply">${escapeHtml(s.apply)}</button>
           </div>
         </div>
       </div>
@@ -68,24 +78,32 @@ export class ModelSwitcherModal {
 
     root.appendChild(this.overlay);
 
+    this.modalEl = this.overlay.querySelector(".velt-switcher")!;
+    this.titleEl = this.overlay.querySelector('[data-role="title"]')!;
+    this.hintEl = this.overlay.querySelector('[data-role="kbd-hint"]')!;
     this.searchInput = this.overlay.querySelector('[data-role="search"]')!;
     this.presetsRow = this.overlay.querySelector('[data-role="presets"]')!;
     this.listEl = this.overlay.querySelector('[data-role="list"]')!;
+    this.effortLabelEl = this.overlay.querySelector('[data-role="effort-label"]')!;
     this.effortRow = this.overlay.querySelector('[data-role="efforts"]')!;
     this.defaultCheck = this.overlay.querySelector('[data-role="save-default"]')!;
+    this.defaultLabelEl = this.overlay.querySelector('[data-role="default-label"]')!;
+    this.cancelBtn = this.overlay.querySelector('[data-action="cancel"]')!;
+    this.applyBtn = this.overlay.querySelector('[data-action="apply"]')!;
 
     this.overlay.addEventListener("mousedown", (e) => {
       if (e.target === this.overlay) this.close();
     });
 
-    this.overlay.querySelector('[data-action="cancel"]')?.addEventListener("click", () => this.close());
-    this.overlay.querySelector('[data-action="apply"]')?.addEventListener("click", () => this.commit());
+    this.cancelBtn.addEventListener("click", () => this.close());
+    this.applyBtn.addEventListener("click", () => this.commit());
 
     this.searchInput.addEventListener("input", () => {
       this.applyFilter();
     });
 
     this.overlay.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -131,14 +149,29 @@ export class ModelSwitcherModal {
     return !this.overlay.classList.contains("hidden");
   }
 
+  public setLocale(locale: AppLocale): void {
+    this.locale = locale;
+    const s = STRINGS[locale].switcher;
+    this.modalEl.setAttribute("aria-label", s.ariaLabel);
+    this.titleEl.textContent = s.title;
+    this.hintEl.textContent = s.kbdHint;
+    this.searchInput.placeholder = s.searchPlaceholder;
+    this.effortLabelEl.textContent = s.effortLabel;
+    this.defaultLabelEl.textContent = s.setDefault;
+    this.cancelBtn.textContent = s.cancel;
+    this.applyBtn.textContent = s.apply;
+  }
+
   public open(
     models: ModelInfo[],
     config: VeltConfig,
     currentModel: string,
     currentEffort: string,
+    locale: AppLocale,
     onApply: (res: SwitcherResult) => void,
     onClose: () => void
   ): void {
+    this.setLocale(locale);
     this.models = models;
     this.config = config;
     this.selectedModel = currentModel || config.default_model;
@@ -169,8 +202,9 @@ export class ModelSwitcherModal {
       this.presetsRow.classList.add("hidden");
       return;
     }
+    const s = STRINGS[this.locale].switcher;
     this.presetsRow.classList.remove("hidden");
-    this.presetsRow.innerHTML = `<span class="velt-presets-label">Preset:</span>`;
+    this.presetsRow.innerHTML = `<span class="velt-presets-label">${escapeHtml(s.presetsLabel)}</span>`;
     presets.forEach((p, idx) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -238,8 +272,9 @@ export class ModelSwitcherModal {
   }
 
   private renderList(): void {
+    const s = STRINGS[this.locale].switcher;
     if (this.filtered.length === 0) {
-      this.listEl.innerHTML = `<div class="velt-empty-state">Nessun modello trovato</div>`;
+      this.listEl.innerHTML = `<div class="velt-empty-state">${escapeHtml(s.emptyState)}</div>`;
       return;
     }
     this.listEl.innerHTML = "";
@@ -248,7 +283,7 @@ export class ModelSwitcherModal {
       row.type = "button";
       row.className = `velt-model-row ${idx === this.activeIdx ? "active" : ""}`;
       const isDefault = m.id === this.config.default_model;
-      const variantsText = m.variants.length ? m.variants.join(" · ") : "standard";
+      const variantsText = m.variants.length ? m.variants.join(" · ") : s.standard;
       const ctxText = m.contextLimit ? `${Math.round(m.contextLimit / 1000)}k` : "";
       row.innerHTML = `
         <div class="velt-model-main">

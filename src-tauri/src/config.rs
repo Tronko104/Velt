@@ -52,10 +52,12 @@ impl Default for Keybindings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VeltConfig {
+    pub language: String,
     pub default_model: String,
     pub default_effort: String,
     pub presets: Vec<Preset>,
     pub auto_context: bool,
+    pub redact_secrets: bool,
     pub context_lines: usize,
     pub show_thinking: bool,
     pub agent_exit_mode: String,
@@ -73,6 +75,7 @@ pub struct VeltConfig {
     pub scrollback: usize,
     pub cursor_style: String,
     pub cursor_blink: bool,
+    pub webgl_renderer: bool,
     pub theme: String,
     pub accent_override: String,
     pub ui_backdrop_style: String,
@@ -94,12 +97,13 @@ pub struct VeltConfig {
 impl Default for VeltConfig {
     fn default() -> Self {
         Self {
+            language: "auto".into(),
             default_model: "opencode/flint-40b-free".into(),
             default_effort: "medium".into(),
             presets: vec![
                 Preset {
                     id: "fast".into(),
-                    name: "Veloce".into(),
+                    name: "Fast".into(),
                     model: "opencode/flint-40b-free".into(),
                     effort: "low".into(),
                 },
@@ -117,6 +121,7 @@ impl Default for VeltConfig {
                 },
             ],
             auto_context: true,
+            redact_secrets: true,
             context_lines: 60,
             show_thinking: false,
             agent_exit_mode: "commands_only".into(),
@@ -134,6 +139,7 @@ impl Default for VeltConfig {
             scrollback: 10000,
             cursor_style: "block".into(),
             cursor_blink: true,
+            webgl_renderer: true,
             theme: "velt-obsidian".into(),
             accent_override: String::new(),
             ui_backdrop_style: "aurora".into(),
@@ -195,9 +201,12 @@ mod tests {
         let cfg = VeltConfig::default();
         let encoded = toml::to_string_pretty(&cfg).expect("serialize default config");
         let decoded: VeltConfig = toml::from_str(&encoded).expect("deserialize default config");
+        assert_eq!(decoded.language, "auto");
         assert_eq!(decoded.default_model, cfg.default_model);
         assert_eq!(decoded.default_effort, cfg.default_effort);
         assert_eq!(decoded.presets.len(), cfg.presets.len());
+        assert!(decoded.redact_secrets);
+        assert!(decoded.webgl_renderer);
         assert_eq!(decoded.keybindings.toggle_agent, "Ctrl+Shift+G");
         assert_eq!(decoded.keybindings.select_all, "Ctrl+Shift+A");
         assert_eq!(decoded.theme, "velt-obsidian");

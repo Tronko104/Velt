@@ -26,6 +26,22 @@ fn get_default_config() -> VeltConfig {
 }
 
 #[tauri::command]
+fn get_system_locale() -> String {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(val) = std::env::var(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty()
+                && !trimmed.eq_ignore_ascii_case("C")
+                && !trimmed.eq_ignore_ascii_case("POSIX")
+            {
+                return trimmed.to_string();
+            }
+        }
+    }
+    "en".to_string()
+}
+
+#[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if !(trimmed.starts_with("http://")
@@ -291,6 +307,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             get_default_config,
+            get_system_locale,
             save_config,
             get_config_path,
             set_window_blur,

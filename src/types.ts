@@ -22,10 +22,12 @@ export interface Keybindings {
 }
 
 export interface VeltConfig {
+  language: "auto" | "it" | "en";
   default_model: string;
   default_effort: string;
   presets: Preset[];
   auto_context: boolean;
+  redact_secrets: boolean;
   context_lines: number;
   show_thinking: boolean;
   agent_exit_mode: "commands_only" | "clean" | "keep_all";
@@ -43,6 +45,7 @@ export interface VeltConfig {
   scrollback: number;
   cursor_style: "block" | "bar" | "underline";
   cursor_blink: boolean;
+  webgl_renderer: boolean;
   theme: string;
   accent_override: string;
   ui_backdrop_style: "aurora" | "subtle" | "flat";
