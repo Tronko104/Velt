@@ -1,0 +1,28 @@
+[package]
+name = "velt"
+version = "0.1.0"
+description = "Velt — Terminal emulator with on-demand OpenCode Agent Mode"
+authors = ["Velt"]
+edition = "2021"
+
+[lib]
+name = "velt_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+cc = "1"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+portable-pty = "0.8"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+futures-util = "0.3"
+base64 = "0.22"
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
