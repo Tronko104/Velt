@@ -1,7 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
+import { STRINGS, resolveLocale, type AppLocale } from "../i18n";
 import { formatRecordedShortcut } from "../keybindings";
-import { VELT_THEMES, getThemeById, isValidHexColor } from "../themes";
-import type { Keybindings, ModelInfo, OpenCodeStatus, Preset, VeltConfig } from "../types";
+import {
+  VELT_THEMES,
+  getThemeById,
+  getThemeTagline,
+  isValidHexColor,
+} from "../themes";
+import type {
+  Keybindings,
+  ModelInfo,
+  OpenCodeStatus,
+  Preset,
+  VeltConfig,
+} from "../types";
 import {
   iconCheck,
   iconClose,
@@ -24,12 +36,18 @@ interface DropdownOption {
 
 export class SettingsModal {
   private overlay: HTMLDivElement;
+  private modalEl: HTMLDivElement;
+  private modalTitleEl: HTMLSpanElement;
+  private closeIconBtn: HTMLButtonElement;
+  private cancelBtn: HTMLButtonElement;
+  private saveBtn: HTMLButtonElement;
   private bodyEl: HTMLDivElement;
   private navButtons: NodeListOf<HTMLButtonElement>;
   private activeSection: SettingsSection = "ai";
   private openMenuEl: HTMLDivElement | null = null;
   private openTriggerEl: HTMLButtonElement | null = null;
 
+  private systemLocale = "en";
   private draft!: VeltConfig;
   private models: ModelInfo[] = [];
   private ocStatus: OpenCodeStatus = { available: false };
@@ -44,21 +62,22 @@ export class SettingsModal {
   constructor(root: HTMLElement) {
     this.overlay = document.createElement("div");
     this.overlay.className = "velt-modal-backdrop hidden";
+    const s = STRINGS.en.settings;
     this.overlay.innerHTML = `
-      <div class="velt-modal velt-settings" role="dialog" aria-label="Impostazioni Velt">
+      <div class="velt-modal velt-settings" role="dialog" aria-label="${escapeAttr(s.ariaLabel)}">
         <div class="velt-modal-header">
           <div class="velt-modal-title">
             ${veltLogoSvg(20)}
-            <span>Impostazioni Velt</span>
+            <span data-role="modal-title">${escapeHtml(s.title)}</span>
           </div>
-          <button type="button" class="velt-icon-btn" data-action="close" aria-label="Chiudi">${iconClose(14)}</button>
+          <button type="button" class="velt-icon-btn" data-action="close" data-role="close-icon" aria-label="${escapeAttr(s.closeAria)}">${iconClose(14)}</button>
         </div>
 
         <div class="velt-settings-layout">
           <nav class="velt-settings-nav">
-            <button type="button" class="velt-nav-item active" data-sec="ai">${iconCpu(14)} <span>OpenCode &amp; Modelli</span></button>
-            <button type="button" class="velt-nav-item" data-sec="terminal">${iconSliders(14)} <span>Terminale &amp; Aspetto</span></button>
-            <button type="button" class="velt-nav-item" data-sec="keys">${iconKeyboard(14)} <span>Scorciatoie</span></button>
+            <button type="button" class="velt-nav-item active" data-sec="ai">${iconCpu(14)} <span>${escapeHtml(s.navAi)}</span></button>
+            <button type="button" class="velt-nav-item" data-sec="terminal">${iconSliders(14)} <span>${escapeHtml(s.navTerminal)}</span></button>
+            <button type="button" class="velt-nav-item" data-sec="keys">${iconKeyboard(14)} <span>${escapeHtml(s.navKeys)}</span></button>
           </nav>
 
           <div class="velt-settings-body" data-role="body"></div>
@@ -67,14 +86,19 @@ export class SettingsModal {
         <div class="velt-modal-footer">
           <span class="velt-config-path" data-role="cfg-path"></span>
           <div class="velt-footer-actions">
-            <button type="button" class="velt-btn velt-btn-ghost" data-action="close">Annulla</button>
-            <button type="button" class="velt-btn velt-btn-primary" data-action="save">Salva impostazioni</button>
+            <button type="button" class="velt-btn velt-btn-ghost" data-action="close" data-role="cancel-btn">${escapeHtml(s.cancel)}</button>
+            <button type="button" class="velt-btn velt-btn-primary" data-action="save">${escapeHtml(s.save)}</button>
           </div>
         </div>
       </div>
     `;
 
     root.appendChild(this.overlay);
+    this.modalEl = this.overlay.querySelector(".velt-settings")!;
+    this.modalTitleEl = this.overlay.querySelector('[data-role="modal-title"]')!;
+    this.closeIconBtn = this.overlay.querySelector('[data-role="close-icon"]')!;
+    this.cancelBtn = this.overlay.querySelector('[data-role="cancel-btn"]')!;
+    this.saveBtn = this.overlay.querySelector('[data-action="save"]')!;
     this.bodyEl = this.overlay.querySelector('[data-role="body"]')!;
     this.navButtons = this.overlay.querySelectorAll(".velt-nav-item");
 
@@ -90,7 +114,11 @@ export class SettingsModal {
 
     this.overlay.addEventListener("mousedown", (e) => {
       const target = e.target as Node;
-      if (this.openMenuEl && !this.openMenuEl.contains(target) && !this.openTriggerEl?.contains(target)) {
+      if (
+        this.openMenuEl &&
+        !this.openMenuEl.contains(target) &&
+        !this.openTriggerEl?.contains(target)
+      ) {
         this.closeDropdownMenu();
       }
       if (e.target === this.overlay) this.close();
@@ -102,13 +130,15 @@ export class SettingsModal {
       btn.addEventListener("click", () => this.close());
     });
 
-    this.overlay.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
+    this.saveBtn.addEventListener("click", async () => {
       this.closeDropdownMenu();
       await this.onSave?.(structuredClone(this.draft));
       this.close();
     });
 
     this.overlay.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
+
       if (this.recordingField) {
         e.preventDefault();
         e.stopPropagation();
@@ -142,6 +172,27 @@ export class SettingsModal {
     return !this.overlay.classList.contains("hidden");
   }
 
+  private getLocale(): AppLocale {
+    return resolveLocale(this.draft?.language, this.systemLocale);
+  }
+
+  private updateModalChrome(): void {
+    const s = STRINGS[this.getLocale()].settings;
+    this.modalEl.setAttribute("aria-label", s.ariaLabel);
+    this.modalTitleEl.textContent = s.title;
+    this.closeIconBtn.setAttribute("aria-label", s.closeAria);
+    this.cancelBtn.textContent = s.cancel;
+    this.saveBtn.textContent = s.save;
+
+    this.navButtons.forEach((btn) => {
+      const labelEl = btn.querySelector("span");
+      if (!labelEl) return;
+      if (btn.dataset.sec === "ai") labelEl.textContent = s.navAi;
+      else if (btn.dataset.sec === "terminal") labelEl.textContent = s.navTerminal;
+      else if (btn.dataset.sec === "keys") labelEl.textContent = s.navKeys;
+    });
+  }
+
   public open(
     config: VeltConfig,
     models: ModelInfo[],
@@ -151,8 +202,10 @@ export class SettingsModal {
     onClose: () => void,
     onRefreshModels?: (showHidden: boolean) => Promise<ModelInfo[]>,
     onPreviewAppearance?: (cfg: VeltConfig) => void,
-    initialSection: SettingsSection = "ai"
+    initialSection: SettingsSection = "ai",
+    systemLocale = "en"
   ): void {
+    this.systemLocale = systemLocale;
     this.draft = structuredClone(config);
     this.models = models;
     this.ocStatus = status;
@@ -164,11 +217,14 @@ export class SettingsModal {
     this.onPreviewAppearance = onPreviewAppearance;
     this.activeSection = initialSection;
 
-    this.navButtons.forEach((b) => b.classList.toggle("active", b.dataset.sec === initialSection));
+    this.navButtons.forEach((b) =>
+      b.classList.toggle("active", b.dataset.sec === initialSection)
+    );
 
     const pathEl = this.overlay.querySelector('[data-role="cfg-path"]');
     if (pathEl) pathEl.textContent = this.configPath;
 
+    this.updateModalChrome();
     this.renderSection();
     this.overlay.classList.remove("hidden");
   }
@@ -198,12 +254,13 @@ export class SettingsModal {
     searchable: boolean,
     onChange: (value: string) => void
   ): HTMLButtonElement {
+    const s = STRINGS[this.getLocale()].settings;
     const current = options.find((o) => o.value === selectedValue) || options[0];
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "velt-dropdown-trigger";
     trigger.innerHTML = `
-      <span class="velt-dropdown-label">${escapeHtml(current ? current.label : selectedValue || "Seleziona...")}</span>
+      <span class="velt-dropdown-label">${escapeHtml(current ? current.label : selectedValue || s.selectPlaceholder)}</span>
       <span class="velt-dropdown-caret">▾</span>
     `;
 
@@ -213,6 +270,7 @@ export class SettingsModal {
       this.closeDropdownMenu();
       if (wasSame) return;
 
+      const curStrings = STRINGS[this.getLocale()].settings;
       const rect = trigger.getBoundingClientRect();
       const menu = document.createElement("div");
       menu.className = "velt-dropdown-menu";
@@ -237,7 +295,7 @@ export class SettingsModal {
         searchInput = document.createElement("input");
         searchInput.type = "text";
         searchInput.className = "velt-input";
-        searchInput.placeholder = "Filtra...";
+        searchInput.placeholder = curStrings.filterPlaceholder;
         searchWrap.appendChild(searchInput);
         menu.appendChild(searchWrap);
       }
@@ -257,7 +315,7 @@ export class SettingsModal {
             (o.sub && o.sub.toLowerCase().includes(needle))
         );
         if (filtered.length === 0) {
-          list.innerHTML = `<div class="velt-empty-state" style="padding:12px;">Nessun risultato</div>`;
+          list.innerHTML = `<div class="velt-empty-state" style="padding:12px;">${escapeHtml(curStrings.emptyFilter)}</div>`;
           return;
         }
         for (const opt of filtered) {
@@ -314,6 +372,7 @@ export class SettingsModal {
   }
 
   private renderAiSection(): void {
+    const ai = STRINGS[this.getLocale()].settings.ai;
     const selectedModelObj = this.models.find((m) => m.id === this.draft.default_model);
     const efforts = effectiveEfforts(selectedModelObj);
     if (!efforts.includes(this.draft.default_effort)) {
@@ -321,20 +380,20 @@ export class SettingsModal {
     }
 
     const statusBadge = this.ocStatus.available
-      ? `<span class="velt-status-ok">Connesso (${escapeHtml(this.ocStatus.version || "opencode-cli")})</span>`
-      : `<span class="velt-status-err">Non trovato: ${escapeHtml(this.ocStatus.error || "verifica percorso")}</span>`;
+      ? `<span class="velt-status-ok">${escapeHtml(ai.connected(this.ocStatus.version || "opencode-cli"))}</span>`
+      : `<span class="velt-status-err">${escapeHtml(ai.notFound(this.ocStatus.error || ai.verifyPath))}</span>`;
 
     this.bodyEl.innerHTML = `
       <div class="velt-section-block">
-        <h3>Combinazione predefinita all'avvio</h3>
-        <p class="velt-help">Scelta automaticamente per ogni nuovo tab e alla riapertura di Velt.</p>
+        <h3>${escapeHtml(ai.defaultTitle)}</h3>
+        <p class="velt-help">${escapeHtml(ai.defaultHelp)}</p>
         <div class="velt-grid-2">
           <div class="velt-field">
-            <span>Modello predefinito</span>
+            <span>${escapeHtml(ai.defaultModel)}</span>
             <div data-slot="default-model"></div>
           </div>
           <div class="velt-field">
-            <span>Reasoning Effort predefinito</span>
+            <span>${escapeHtml(ai.defaultEffort)}</span>
             <div data-slot="default-effort"></div>
           </div>
         </div>
@@ -343,10 +402,10 @@ export class SettingsModal {
       <div class="velt-section-block">
         <div class="velt-row-between">
           <div>
-            <h3>Preset rapidi</h3>
-            <p class="velt-help">Combinazioni pronte da richiamare con un clic o numero nel Quick Switcher.</p>
+            <h3>${escapeHtml(ai.presetsTitle)}</h3>
+            <p class="velt-help">${escapeHtml(ai.presetsHelp)}</p>
           </div>
-          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="add-preset">${iconPlus(12)} <span>Aggiungi preset</span></button>
+          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="add-preset">${iconPlus(12)} <span>${escapeHtml(ai.addPreset)}</span></button>
         </div>
         <div class="velt-presets-editor" data-role="presets-list"></div>
       </div>
@@ -354,48 +413,49 @@ export class SettingsModal {
       <div class="velt-section-block">
         <div class="velt-row-between">
           <div>
-            <h3>Uscita da Agent Mode &amp; Ragionamento</h3>
-            <p class="velt-help">Scegli cosa resta visibile nel terminale quando torni alla shell e come mostrare pensieri e comandi.</p>
+            <h3>${escapeHtml(ai.exitTitle)}</h3>
+            <p class="velt-help">${escapeHtml(ai.exitHelp)}</p>
           </div>
-          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-ai">${iconReset(12)} <span>Predefiniti AI</span></button>
+          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-ai">${iconReset(12)} <span>${escapeHtml(ai.resetAi)}</span></button>
         </div>
         <div class="velt-grid-2">
           <div class="velt-field">
-            <span>All'uscita dall'Agent Mode</span>
+            <span>${escapeHtml(ai.exitModeLabel)}</span>
             <div data-slot="agent-exit-mode"></div>
           </div>
           <div class="velt-field">
-            <span>Stile comandi agente in Shell Mode</span>
+            <span>${escapeHtml(ai.cmdStyleLabel)}</span>
             <div data-slot="agent-cmd-style"></div>
           </div>
         </div>
         <div class="velt-toggles" style="margin-top: 10px;">
-          ${switchHtml("agent_live_think_bar", "Mostra barra live del ragionamento nel Dock mentre OpenCode pensa", this.draft.agent_live_think_bar ?? true)}
-          ${switchHtml("show_tool_output_in_agent", "Mostra anteprima compatta dell'output dei comandi dentro Agent Mode", this.draft.show_tool_output_in_agent ?? true)}
-          ${switchHtml("show_thinking", "Scrivi anche il riquadro ragionamento completo nello scrollback", this.draft.show_thinking)}
+          ${switchHtml("agent_live_think_bar", ai.liveThinkBar, this.draft.agent_live_think_bar ?? true)}
+          ${switchHtml("show_tool_output_in_agent", ai.toolOutputInAgent, this.draft.show_tool_output_in_agent ?? true)}
+          ${switchHtml("show_thinking", ai.showThinking, this.draft.show_thinking)}
         </div>
       </div>
 
       <div class="velt-section-block">
-        <h3>Integrazione OpenCode CLI</h3>
+        <h3>${escapeHtml(ai.cliTitle)}</h3>
         <div class="velt-status-row">
-          <span>Stato: ${statusBadge}</span>
+          <span>${escapeHtml(ai.statusLabel)} ${statusBadge}</span>
           ${this.ocStatus.binaryPath ? `<span class="velt-muted">${escapeHtml(this.ocStatus.binaryPath)}</span>` : ""}
         </div>
         <div class="velt-toggles">
-          ${switchHtml("auto_context", "Includi automaticamente directory e ultime righe del terminale", this.draft.auto_context)}
-          ${switchHtml("auto_approve", "Auto-approva esecuzione tool OpenCode (--auto)", this.draft.auto_approve)}
-          ${switchHtml("show_hidden_models", "Mostra anche i modelli nascosti in OpenCode Desktop", this.draft.show_hidden_models)}
-          ${switchHtml("show_model_in_shell", "Mostra selettore modello nella barra anche in modalità terminale (Shell)", Boolean(this.draft.show_model_in_shell))}
+          ${switchHtml("auto_context", ai.autoContext, this.draft.auto_context)}
+          ${switchHtml("redact_secrets", ai.redactSecrets, this.draft.redact_secrets ?? true)}
+          ${switchHtml("auto_approve", ai.autoApprove, this.draft.auto_approve)}
+          ${switchHtml("show_hidden_models", ai.showHiddenModels, this.draft.show_hidden_models)}
+          ${switchHtml("show_model_in_shell", ai.showModelInShell, Boolean(this.draft.show_model_in_shell))}
         </div>
         <div class="velt-grid-2">
           <label class="velt-field">
-            <span>Righe di contesto terminale</span>
+            <span>${escapeHtml(ai.contextLines)}</span>
             <input type="number" min="10" max="300" class="velt-input" data-bind="context_lines" value="${this.draft.context_lines}" />
           </label>
           <label class="velt-field">
-            <span>Percorso opencode-cli (vuoto = auto)</span>
-            <input type="text" class="velt-input" data-bind="opencode_bin" value="${escapeAttr(this.draft.opencode_bin)}" placeholder="Auto-rilevato" />
+            <span>${escapeHtml(ai.opencodeBin)}</span>
+            <input type="text" class="velt-input" data-bind="opencode_bin" value="${escapeAttr(this.draft.opencode_bin)}" placeholder="${escapeAttr(ai.autoDetected)}" />
           </label>
         </div>
       </div>
@@ -431,9 +491,9 @@ export class SettingsModal {
     exitModeSlot.appendChild(
       this.createDarkDropdown(
         [
-          { value: "commands_only", label: "Solo comandi agente (input & output)", sub: "Consigliato" },
-          { value: "clean", label: "Terminale pulito (nascondi tutto)", sub: "Zero tracce" },
-          { value: "keep_all", label: "Mantieni conversazione completa", sub: "Chat AI" },
+          { value: "commands_only", label: ai.exitModeCommands, sub: ai.exitModeCommandsSub },
+          { value: "clean", label: ai.exitModeClean, sub: ai.exitModeCleanSub },
+          { value: "keep_all", label: ai.exitModeKeep, sub: ai.exitModeKeepSub },
         ],
         this.draft.agent_exit_mode || "commands_only",
         false,
@@ -448,9 +508,9 @@ export class SettingsModal {
     cmdStyleSlot.appendChild(
       this.createDarkDropdown(
         [
-          { value: "shell", label: "Shell ($ comando)", sub: "Pulito" },
-          { value: "tagged", label: "Tagged ([agent]$ comando)", sub: "Con stato" },
-          { value: "minimal", label: "Minimale (# comando)", sub: "Discreto" },
+          { value: "shell", label: ai.cmdStyleShell, sub: ai.cmdStyleShellSub },
+          { value: "tagged", label: ai.cmdStyleTagged, sub: ai.cmdStyleTaggedSub },
+          { value: "minimal", label: ai.cmdStyleMinimal, sub: ai.cmdStyleMinimalSub },
         ],
         this.draft.agent_cmd_style || "shell",
         false,
@@ -469,6 +529,9 @@ export class SettingsModal {
     });
     this.bodyEl.querySelector('[data-bind="auto_context"]')?.addEventListener("change", (e) => {
       this.draft.auto_context = (e.target as HTMLInputElement).checked;
+    });
+    this.bodyEl.querySelector('[data-bind="redact_secrets"]')?.addEventListener("change", (e) => {
+      this.draft.redact_secrets = (e.target as HTMLInputElement).checked;
     });
     this.bodyEl.querySelector('[data-bind="show_thinking"]')?.addEventListener("change", (e) => {
       this.draft.show_thinking = (e.target as HTMLInputElement).checked;
@@ -496,6 +559,7 @@ export class SettingsModal {
     this.bodyEl.querySelector('[data-action="reset-ai"]')?.addEventListener("click", async () => {
       const def = await invoke<VeltConfig>("get_default_config");
       this.draft.auto_context = def.auto_context;
+      this.draft.redact_secrets = def.redact_secrets;
       this.draft.context_lines = def.context_lines;
       this.draft.show_thinking = def.show_thinking;
       this.draft.agent_exit_mode = def.agent_exit_mode;
@@ -511,7 +575,7 @@ export class SettingsModal {
       const id = `preset-${Date.now()}`;
       this.draft.presets.push({
         id,
-        name: "Nuovo Preset",
+        name: ai.newPresetDefaultName,
         model: this.draft.default_model,
         effort: this.draft.default_effort,
       });
@@ -526,6 +590,8 @@ export class SettingsModal {
     if (!container) return;
     container.innerHTML = "";
 
+    const ai = STRINGS[this.getLocale()].settings.ai;
+
     this.draft.presets.forEach((p: Preset, idx: number) => {
       const row = document.createElement("div");
       row.className = "velt-preset-row";
@@ -538,7 +604,7 @@ export class SettingsModal {
       nameInput.type = "text";
       nameInput.className = "velt-input velt-preset-name";
       nameInput.value = p.name;
-      nameInput.placeholder = "Nome";
+      nameInput.placeholder = ai.presetNamePlaceholder;
       nameInput.addEventListener("input", () => {
         p.name = nameInput.value;
       });
@@ -566,7 +632,7 @@ export class SettingsModal {
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "velt-icon-btn velt-danger-btn";
-      delBtn.title = "Rimuovi preset";
+      delBtn.title = ai.removePreset;
       delBtn.innerHTML = iconClose(12);
       delBtn.addEventListener("click", () => {
         this.draft.presets.splice(idx, 1);
@@ -583,9 +649,13 @@ export class SettingsModal {
   }
 
   private renderTerminalSection(): void {
+    const locale = this.getLocale();
+    const termStrings = STRINGS[locale].settings.terminal;
     const activeTheme = this.draft.theme || "velt-obsidian";
     const themeObj = getThemeById(activeTheme);
-    const customAccent = isValidHexColor(this.draft.accent_override) ? this.draft.accent_override : "";
+    const customAccent = isValidHexColor(this.draft.accent_override)
+      ? this.draft.accent_override
+      : "";
     const pickerColor = customAccent || themeObj.accent;
     const blurEnabled = this.draft.blur ?? true;
     const blurRadius = this.draft.blur_radius ?? 16;
@@ -594,13 +664,13 @@ export class SettingsModal {
     const termPadding = this.draft.terminal_padding ?? 10;
 
     const accentPresets = [
-      { label: "Ciano Velt", hex: "#26c6ff" },
-      { label: "Indaco", hex: "#7aa2f7" },
-      { label: "Lavanda", hex: "#cba6f7" },
-      { label: "Smeraldo", hex: "#4ade80" },
-      { label: "Ambra", hex: "#fabd2f" },
-      { label: "Corallo", hex: "#fb7185" },
-      { label: "Arancio", hex: "#f97316" },
+      { label: termStrings.accentPresets.cyan, hex: "#26c6ff" },
+      { label: termStrings.accentPresets.indigo, hex: "#7aa2f7" },
+      { label: termStrings.accentPresets.lavender, hex: "#cba6f7" },
+      { label: termStrings.accentPresets.emerald, hex: "#4ade80" },
+      { label: termStrings.accentPresets.amber, hex: "#fabd2f" },
+      { label: termStrings.accentPresets.coral, hex: "#fb7185" },
+      { label: termStrings.accentPresets.orange, hex: "#f97316" },
     ];
 
     const accentSwatchesHtml = accentPresets
@@ -631,7 +701,7 @@ export class SettingsModal {
           </div>
           <div class="velt-theme-meta">
             <span class="velt-theme-name">${escapeHtml(t.name)}</span>
-            <span class="velt-theme-tagline">${escapeHtml(t.tagline)}</span>
+            <span class="velt-theme-tagline">${escapeHtml(getThemeTagline(t, locale))}</span>
           </div>
           ${selected ? `<span class="velt-theme-check">${iconCheck(11)}</span>` : ""}
         </button>
@@ -642,10 +712,10 @@ export class SettingsModal {
       <div class="velt-section-block">
         <div class="velt-row-between">
           <div>
-            <h3>Tema terminale &amp; interfaccia</h3>
-            <p class="velt-help">Seleziona una palette: anteprima immediata in tempo reale sull'intera finestra.</p>
+            <h3>${escapeHtml(termStrings.themeTitle)}</h3>
+            <p class="velt-help">${escapeHtml(termStrings.themeHelp)}</p>
           </div>
-          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-terminal">${iconReset(12)} <span>Predefiniti aspetto</span></button>
+          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-terminal">${iconReset(12)} <span>${escapeHtml(termStrings.resetTerminal)}</span></button>
         </div>
         <div class="velt-theme-grid" data-role="theme-grid">
           ${themeCardsHtml}
@@ -653,95 +723,119 @@ export class SettingsModal {
       </div>
 
       <div class="velt-section-block">
-        <h3>Personalizzazione Estetica &amp; Colori</h3>
-        <p class="velt-help">Sovrascrivi il colore d'accento del tema e personalizza sfondo, aura dell'Agent Mode e geometria.</p>
+        <h3>${escapeHtml(termStrings.customTitle)}</h3>
+        <p class="velt-help">${escapeHtml(termStrings.customHelp)}</p>
+        <div class="velt-field" style="margin-bottom: 10px;">
+          <span>${escapeHtml(termStrings.languageLabel)}</span>
+          <div data-slot="ui-language"></div>
+        </div>
         <div class="velt-accent-bar">
-          <span class="velt-accent-label">Colore d'accento</span>
+          <span class="velt-accent-label">${escapeHtml(termStrings.accentLabel)}</span>
           <div class="velt-accent-swatches">
-            <button type="button" class="velt-accent-reset ${!customAccent ? "active" : ""}" data-action="reset-accent" title="Usa colore predefinito del tema">Tema</button>
+            <button type="button" class="velt-accent-reset ${!customAccent ? "active" : ""}" data-action="reset-accent" title="${escapeAttr(termStrings.accentThemeTitle)}">${escapeHtml(termStrings.accentThemeBtn)}</button>
             ${accentSwatchesHtml}
-            <label class="velt-color-picker-wrap" title="Scegli colore personalizzato">
+            <label class="velt-color-picker-wrap" title="${escapeAttr(termStrings.accentPickerTitle)}">
               <input type="color" class="velt-color-input" data-bind="accent_picker" value="${escapeAttr(pickerColor)}" />
-              <span>${customAccent || "Custom"}</span>
+              <span>${customAccent || escapeHtml(termStrings.accentCustom)}</span>
             </label>
           </div>
         </div>
         <div class="velt-grid-2" style="margin-top: 10px;">
           <div class="velt-field">
-            <span>Sfondo finestra</span>
+            <span>${escapeHtml(termStrings.backdropLabel)}</span>
             <div data-slot="ui-backdrop-style"></div>
           </div>
           <div class="velt-field">
-            <span>Aura visiva Agent Mode</span>
+            <span>${escapeHtml(termStrings.agentAuraLabel)}</span>
             <div data-slot="agent-aura"></div>
           </div>
           <label class="velt-field">
-            <span>Arrotondamento bordi: <strong data-role="radius-val">${uiRadius}px</strong></span>
+            <span>${escapeHtml(termStrings.uiRadius)} <strong data-role="radius-val">${uiRadius}px</strong></span>
             <input type="range" class="velt-range" min="0" max="18" step="1" data-bind="ui_radius" value="${uiRadius}" />
           </label>
           <label class="velt-field">
-            <span>Margine interno terminale: <strong data-role="pad-val">${termPadding}px</strong></span>
+            <span>${escapeHtml(termStrings.termPadding)} <strong data-role="pad-val">${termPadding}px</strong></span>
             <input type="range" class="velt-range" min="2" max="28" step="1" data-bind="terminal_padding" value="${termPadding}" />
           </label>
         </div>
         <div class="velt-toggles" style="margin-top: 10px;">
-          ${switchHtml("show_status_bar", "Mostra barra di stato inferiore (cwd, modello, scorciatoia)", this.draft.show_status_bar ?? true)}
-          ${switchHtml("compact_chrome", "Barra superiore compatta (nasconde testo logo, guadagna spazio)", Boolean(this.draft.compact_chrome))}
-          ${switchHtml("cursor_blink", "Cursore lampeggiante nel terminale", this.draft.cursor_blink ?? true)}
-          ${switchHtml("focus_follows_mouse", "Focus automatico al passaggio del mouse nei riquadri divisi (scrivi senza cliccare)", Boolean(this.draft.focus_follows_mouse))}
-          ${switchHtml("copy_on_select", "Copia automaticamente il testo quando lo selezioni nel terminale", Boolean(this.draft.copy_on_select))}
-          ${switchHtml("middle_click_paste", "Incolla con clic centrale del mouse (Primary / Clipboard)", this.draft.middle_click_paste ?? true)}
+          ${switchHtml("show_status_bar", termStrings.showStatusBar, this.draft.show_status_bar ?? true)}
+          ${switchHtml("compact_chrome", termStrings.compactChrome, Boolean(this.draft.compact_chrome))}
+          ${switchHtml("cursor_blink", termStrings.cursorBlink, this.draft.cursor_blink ?? true)}
+          ${switchHtml("focus_follows_mouse", termStrings.focusFollowsMouse, Boolean(this.draft.focus_follows_mouse))}
+          ${switchHtml("copy_on_select", termStrings.copyOnSelect, Boolean(this.draft.copy_on_select))}
+          ${switchHtml("middle_click_paste", termStrings.middleClickPaste, this.draft.middle_click_paste ?? true)}
+          ${switchHtml("webgl_renderer", termStrings.webglRenderer, this.draft.webgl_renderer ?? true)}
         </div>
       </div>
 
       <div class="velt-section-block">
-        <h3>Trasparenza, Sfocatura &amp; Animazioni</h3>
+        <h3>${escapeHtml(termStrings.glassTitle)}</h3>
         <div class="velt-toggles">
-          ${switchHtml("blur", "Sfocatura finestra (Wayland/X11 compositor blur + vetro satinato)", blurEnabled)}
-          ${switchHtml("animations", "Animazioni fluide, aura Agent Mode e toast visivi", this.draft.animations ?? true)}
+          ${switchHtml("blur", termStrings.blurToggle, blurEnabled)}
+          ${switchHtml("animations", termStrings.animationsToggle, this.draft.animations ?? true)}
         </div>
         <div class="velt-grid-2">
           <label class="velt-field">
-            <span>Opacità finestra: <strong data-role="op-val">${opacityPct}%</strong></span>
+            <span>${escapeHtml(termStrings.opacityLabel)} <strong data-role="op-val">${opacityPct}%</strong></span>
             <input type="range" class="velt-range" min="0.35" max="1" step="0.01" data-bind="opacity" value="${this.draft.opacity}" />
           </label>
           <label class="velt-field">
-            <span>Intensità sfocatura vetro: <strong data-role="blur-val">${blurEnabled ? `${blurRadius}px` : "Off"}</strong></span>
+            <span>${escapeHtml(termStrings.blurRadiusLabel)} <strong data-role="blur-val">${blurEnabled ? `${blurRadius}px` : escapeHtml(termStrings.blurOff)}</strong></span>
             <input type="range" class="velt-range" min="0" max="40" step="1" data-bind="blur_radius" value="${blurRadius}" ${blurEnabled ? "" : "disabled"} />
           </label>
         </div>
       </div>
 
       <div class="velt-section-block">
-        <h3>Tipografia &amp; Buffer</h3>
+        <h3>${escapeHtml(termStrings.typoTitle)}</h3>
         <div class="velt-grid-2">
           <label class="velt-field">
-            <span>Font Family</span>
+            <span>${escapeHtml(termStrings.fontFamily)}</span>
             <input type="text" class="velt-input" data-bind="font_family" value="${escapeAttr(this.draft.font_family)}" />
           </label>
           <label class="velt-field">
-            <span>Shell (vuoto = $SHELL)</span>
-            <input type="text" class="velt-input" data-bind="shell" value="${escapeAttr(this.draft.shell)}" placeholder="/bin/zsh, /bin/bash, /usr/bin/fish" />
+            <span>${escapeHtml(termStrings.shellLabel)}</span>
+            <input type="text" class="velt-input" data-bind="shell" value="${escapeAttr(this.draft.shell)}" placeholder="${escapeAttr(termStrings.shellPlaceholder)}" />
           </label>
           <label class="velt-field">
-            <span>Dimensione Font (px)</span>
+            <span>${escapeHtml(termStrings.fontSize)}</span>
             <input type="number" min="9" max="32" class="velt-input" data-bind="font_size" value="${this.draft.font_size}" />
           </label>
           <label class="velt-field">
-            <span>Line Height</span>
+            <span>${escapeHtml(termStrings.lineHeight)}</span>
             <input type="number" step="0.05" min="1.0" max="2.0" class="velt-input" data-bind="line_height" value="${this.draft.line_height}" />
           </label>
           <div class="velt-field">
-            <span>Stile Cursore</span>
+            <span>${escapeHtml(termStrings.cursorStyle)}</span>
             <div data-slot="cursor-style"></div>
           </div>
           <label class="velt-field">
-            <span>Scrollback (righe)</span>
+            <span>${escapeHtml(termStrings.scrollback)}</span>
             <input type="number" min="500" max="100000" step="500" class="velt-input" data-bind="scrollback" value="${this.draft.scrollback}" />
           </label>
         </div>
       </div>
     `;
+
+    const langSlot = this.bodyEl.querySelector('[data-slot="ui-language"]')!;
+    langSlot.appendChild(
+      this.createDarkDropdown(
+        [
+          { value: "auto", label: termStrings.langAuto, sub: termStrings.langAutoSub },
+          { value: "it", label: termStrings.langIt },
+          { value: "en", label: termStrings.langEn },
+        ],
+        this.draft.language || "auto",
+        false,
+        (val) => {
+          this.draft.language = val as VeltConfig["language"];
+          this.onPreviewAppearance?.(structuredClone(this.draft));
+          this.updateModalChrome();
+          this.renderTerminalSection();
+        }
+      )
+    );
 
     this.bodyEl.querySelectorAll<HTMLButtonElement>(".velt-theme-card").forEach((card) => {
       card.addEventListener("click", () => {
@@ -783,9 +877,9 @@ export class SettingsModal {
     backdropSlot.appendChild(
       this.createDarkDropdown(
         [
-          { value: "aurora", label: "Aurora", sub: "Bagliore bicolore" },
-          { value: "subtle", label: "Sottile", sub: "Riflesso discreto" },
-          { value: "flat", label: "Flat", sub: "Tinta uniforme" },
+          { value: "aurora", label: termStrings.backdropAurora, sub: termStrings.backdropAuroraSub },
+          { value: "subtle", label: termStrings.backdropSubtle, sub: termStrings.backdropSubtleSub },
+          { value: "flat", label: termStrings.backdropFlat, sub: termStrings.backdropFlatSub },
         ],
         this.draft.ui_backdrop_style || "aurora",
         false,
@@ -801,9 +895,9 @@ export class SettingsModal {
     auraSlot.appendChild(
       this.createDarkDropdown(
         [
-          { value: "vivid", label: "Vivida", sub: "Bordo + bagliore" },
-          { value: "minimal", label: "Minimale", sub: "Solo bordo sottile" },
-          { value: "off", label: "Disattiva", sub: "Nessuna cornice" },
+          { value: "vivid", label: termStrings.auraVivid, sub: termStrings.auraVividSub },
+          { value: "minimal", label: termStrings.auraMinimal, sub: termStrings.auraMinimalSub },
+          { value: "off", label: termStrings.auraOff, sub: termStrings.auraOffSub },
         ],
         this.draft.agent_aura || "vivid",
         false,
@@ -843,6 +937,7 @@ export class SettingsModal {
 
     this.bodyEl.querySelector('[data-action="reset-terminal"]')?.addEventListener("click", async () => {
       const def = await invoke<VeltConfig>("get_default_config");
+      this.draft.language = def.language;
       this.draft.theme = def.theme;
       this.draft.accent_override = def.accent_override;
       this.draft.ui_backdrop_style = def.ui_backdrop_style;
@@ -856,6 +951,7 @@ export class SettingsModal {
       this.draft.copy_on_select = def.copy_on_select;
       this.draft.middle_click_paste = def.middle_click_paste;
       this.draft.focus_follows_mouse = def.focus_follows_mouse;
+      this.draft.webgl_renderer = def.webgl_renderer;
       this.draft.blur = def.blur;
       this.draft.blur_radius = def.blur_radius;
       this.draft.opacity = def.opacity;
@@ -865,6 +961,7 @@ export class SettingsModal {
       this.draft.line_height = def.line_height;
       this.draft.scrollback = def.scrollback;
       this.onPreviewAppearance?.(structuredClone(this.draft));
+      this.updateModalChrome();
       this.renderTerminalSection();
     });
 
@@ -885,13 +982,18 @@ export class SettingsModal {
       this.draft.middle_click_paste = (e.target as HTMLInputElement).checked;
     });
 
+    this.bodyEl.querySelector('[data-bind="webgl_renderer"]')?.addEventListener("change", (e) => {
+      this.draft.webgl_renderer = (e.target as HTMLInputElement).checked;
+      this.onPreviewAppearance?.(structuredClone(this.draft));
+    });
+
     const cursorSlot = this.bodyEl.querySelector('[data-slot="cursor-style"]')!;
     cursorSlot.appendChild(
       this.createDarkDropdown(
         [
-          { value: "block", label: "Block (stile Velt)" },
-          { value: "bar", label: "Bar" },
-          { value: "underline", label: "Underline" },
+          { value: "block", label: termStrings.cursorBlock },
+          { value: "bar", label: termStrings.cursorBar },
+          { value: "underline", label: termStrings.cursorUnderline },
         ],
         this.draft.cursor_style,
         false,
@@ -910,7 +1012,7 @@ export class SettingsModal {
       this.draft.blur = (e.target as HTMLInputElement).checked;
       if (blurSlider) blurSlider.disabled = !this.draft.blur;
       if (blurLbl) {
-        blurLbl.textContent = this.draft.blur ? `${this.draft.blur_radius}px` : "Off";
+        blurLbl.textContent = this.draft.blur ? `${this.draft.blur_radius}px` : termStrings.blurOff;
       }
       this.onPreviewAppearance?.(structuredClone(this.draft));
     });
@@ -918,7 +1020,7 @@ export class SettingsModal {
     blurSlider?.addEventListener("input", (e) => {
       const val = Math.min(40, Math.max(0, Number((e.target as HTMLInputElement).value) || 0));
       this.draft.blur_radius = val;
-      if (blurLbl) blurLbl.textContent = this.draft.blur ? `${val}px` : "Off";
+      if (blurLbl) blurLbl.textContent = this.draft.blur ? `${val}px` : termStrings.blurOff;
       this.onPreviewAppearance?.(structuredClone(this.draft));
     });
 
@@ -954,30 +1056,31 @@ export class SettingsModal {
   }
 
   private renderKeysSection(): void {
-    const labels: Array<{ key: keyof Keybindings; title: string; desc: string }> = [
-      { key: "toggle_agent", title: "Attiva / Esci da Agent Mode", desc: "Scorciatoia principale (WM-safe)" },
-      { key: "toggle_agent_alt", title: "Attiva / Esci da Agent Mode (Alt)", desc: "Scorciatoia secondaria rapida" },
-      { key: "select_all", title: "Seleziona tutto il testo", desc: "Seleziona l'intero buffer del terminale" },
-      { key: "model_switcher", title: "Apri Quick Switcher Modello & Effort", desc: "Cambia modello, reasoning effort o preset" },
-      { key: "cycle_effort", title: "Cicla Reasoning Effort", desc: "Scala low -> medium -> high -> max" },
-      { key: "insert_command", title: "Incolla comando suggerito nella shell", desc: "Senza eseguirlo automaticamente" },
-      { key: "new_agent_session", title: "Nuova sessione OpenCode nel riquadro", desc: "Azzera la conversazione AI attiva" },
-      { key: "split_vertical", title: "Dividi riquadro a destra (Verticale)", desc: "Apre una seconda shell affiancata" },
-      { key: "split_horizontal", title: "Dividi riquadro in basso (Orizzontale)", desc: "Apre una seconda shell sotto" },
-      { key: "close_pane", title: "Chiudi riquadro attivo", desc: "Chiude il riquadro split corrente (o il tab se ultimo)" },
-      { key: "new_tab", title: "Nuovo Tab", desc: "Apre una nuova shell (anche Ctrl+T)" },
-      { key: "close_tab", title: "Chiudi Tab", desc: "Chiude il tab corrente" },
-      { key: "open_settings", title: "Apri Impostazioni", desc: "Mostra questa finestra" },
+    const keysStrings = STRINGS[this.getLocale()].settings.keys;
+    const keyOrder: Array<keyof Keybindings> = [
+      "toggle_agent",
+      "toggle_agent_alt",
+      "select_all",
+      "model_switcher",
+      "cycle_effort",
+      "insert_command",
+      "new_agent_session",
+      "split_vertical",
+      "split_horizontal",
+      "close_pane",
+      "new_tab",
+      "close_tab",
+      "open_settings",
     ];
 
     this.bodyEl.innerHTML = `
       <div class="velt-section-block">
         <div class="velt-row-between">
           <div>
-            <h3>Scorciatoie da tastiera</h3>
-            <p class="velt-help">Clicca su una scorciatoia e premi la nuova combinazione (evita <code>Alt+Space</code> su Hyprland/Sway). Navigazione riquadri: <code>Ctrl+Shift+Frecce</code>. Premi <code>Esc</code> per annullare.</p>
+            <h3>${escapeHtml(keysStrings.title)}</h3>
+            <p class="velt-help">${keysStrings.helpHtml}</p>
           </div>
-          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-keys">${iconReset(12)} <span>Predefiniti tasti</span></button>
+          <button type="button" class="velt-btn velt-btn-ghost velt-btn-icon" data-action="reset-keys">${iconReset(12)} <span>${escapeHtml(keysStrings.resetKeys)}</span></button>
         </div>
         <div class="velt-keys-list" data-role="keys"></div>
       </div>
@@ -991,12 +1094,16 @@ export class SettingsModal {
     });
 
     const list = this.bodyEl.querySelector('[data-role="keys"]')!;
-    labels.forEach(({ key, title, desc }) => {
+    keyOrder.forEach((key) => {
+      const [title, desc] = keysStrings.items[key];
       const row = document.createElement("div");
       row.className = "velt-key-row";
       const isRec = this.recordingField === key;
       const val = this.draft.keybindings[key];
-      const wmWarn = val.toLowerCase() === "alt+space" ? `<span class="velt-warn-tag">Possibile conflitto WM</span>` : "";
+      const wmWarn =
+        val.toLowerCase() === "alt+space"
+          ? `<span class="velt-warn-tag">${escapeHtml(keysStrings.wmConflict)}</span>`
+          : "";
 
       row.innerHTML = `
         <div>
@@ -1004,7 +1111,7 @@ export class SettingsModal {
           <div class="velt-key-desc">${escapeHtml(desc)}</div>
         </div>
         <button type="button" class="velt-kbd-btn ${isRec ? "recording" : ""}">
-          ${isRec ? "Premi i tasti..." : escapeHtml(val)}
+          ${isRec ? escapeHtml(keysStrings.recording) : escapeHtml(val)}
         </button>
       `;
 

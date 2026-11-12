@@ -1,5 +1,13 @@
 import type { Terminal } from "@xterm/xterm";
+import { STRINGS, type AppLocale } from "./i18n";
+import { redactSensitiveText } from "./redact";
 import { computeSoftAccent, isValidHexColor, type VeltTheme } from "./themes";
+
+let currentAnsiLocale: AppLocale = "en";
+
+export function setAnsiLocale(locale: AppLocale): void {
+  currentAnsiLocale = locale;
+}
 
 const ESC = "\x1b";
 export const RESET = `${ESC}[0m`;
@@ -211,7 +219,16 @@ function buildCellSgr(c: NonNullable<ReturnType<NonNullable<ReturnType<Terminal[
   return `${ESC}[${codes.join(";")}m`;
 }
 
-export function extractRecentContext(term: Terminal, maxLines: number): string {
+export interface ExtractedContext {
+  text: string;
+  redactedCount: number;
+}
+
+export function extractRecentContext(
+  term: Terminal,
+  maxLines: number,
+  redactSecrets = true
+): ExtractedContext {
   const buf = term.buffer.active;
   const total = buf.length;
   const start = Math.max(0, total - Math.max(10, maxLines * 2));
@@ -226,7 +243,11 @@ export function extractRecentContext(term: Terminal, maxLines: number): string {
     }
   }
 
-  return lines.slice(-maxLines).join("\n");
+  const raw = lines.slice(-maxLines).join("\n");
+  if (!redactSecrets || !raw) {
+    return { text: raw, redactedCount: 0 };
+  }
+  return redactSensitiveText(raw);
 }
 
 export function formatAgentPromptHeader(
@@ -280,7 +301,8 @@ export function formatToolOutputPreview(output: string, maxLines = 8): string {
     out += `  ${DIM}${CYAN}│${RESET} ${MUTED}${line}${RESET}\r\n`;
   }
   if (lines.length > maxLines) {
-    out += `  ${DIM}${CYAN}│${RESET} ${DIM}${MUTED}… (+${lines.length - maxLines} righe)${RESET}\r\n`;
+    const more = STRINGS[currentAnsiLocale].ansi.moreLines(lines.length - maxLines);
+    out += `  ${DIM}${CYAN}│${RESET} ${DIM}${MUTED}${more}${RESET}\r\n`;
   }
   return out;
 }
@@ -318,7 +340,8 @@ export function formatAgentCommandIoForShell(
 
     if (!rec.ok) {
       const errDetail = rec.errorText ? ` (${rec.errorText})` : "";
-      out += `${RED}[exit errore${errDetail}]${RESET}\r\n`;
+      const errTag = STRINGS[currentAnsiLocale].ansi.exitError(errDetail);
+      out += `${RED}${errTag}${RESET}\r\n`;
     } else if (style === "tagged" && cleanOut.length === 0) {
       out += `${DIM}${GREEN}[ok]${RESET}\r\n`;
     }
@@ -332,11 +355,12 @@ export function formatAgentFooter(
   insertShortcut: string,
   tokensOut?: number | null
 ): string {
+  const t = STRINGS[currentAnsiLocale].ansi;
   const tokStr = tokensOut ? `  ${DIM}${MUTED}(${tokensOut} tok)${RESET}` : "";
   const cmdHint = lastCommand
-    ? `  ${CYAN}-> ${insertShortcut}${RESET} ${MUTED}per inserire comando:${RESET} ${CYAN_SOFT}${truncateInline(lastCommand, 48)}${RESET}\r\n`
+    ? `  ${CYAN}-> ${insertShortcut}${RESET} ${MUTED}${t.insertCommandHint}${RESET} ${CYAN_SOFT}${truncateInline(lastCommand, 48)}${RESET}\r\n`
     : "";
-  return `\r\n${cmdHint}${DIM}${MUTED}  ── Esc per tornare alla shell ──${RESET}${tokStr}\r\n`;
+  return `\r\n${cmdHint}${DIM}${MUTED}  ${t.escToShell}${RESET}${tokStr}\r\n`;
 }
 
 function truncateInline(s: string, max: number): string {
@@ -390,7 +414,8 @@ export class StreamingMarkdownAnsi {
       this.thinkStartedAt = performance.now();
       this.thinkBlankLines = 0;
       this.thinkHasContent = false;
-      this.term.write(`  ${DIM}${CYAN}╭─${RESET} ${DIM}${MUTED}RAGIONAMENTO${RESET}\r\n`);
+      const header = STRINGS[currentAnsiLocale].ansi.reasoningHeader;
+      this.term.write(`  ${DIM}${CYAN}╭─${RESET} ${DIM}${MUTED}${header}${RESET}\r\n`);
     }
 
     const maxCols = Math.max(48, Math.min(88, (this.term.cols || 88) - 8));
@@ -448,7 +473,8 @@ export class StreamingMarkdownAnsi {
       this.inThinking = false;
       const secs = Math.max(0.1, (performance.now() - this.thinkStartedAt) / 1000).toFixed(1);
       const newline = this.thinkAtLineStart ? "" : `${RESET}\r\n`;
-      this.term.write(`${newline}  ${DIM}${CYAN}╰─${RESET} ${DIM}${MUTED}ragionamento (${secs}s)${RESET}\r\n\r\n`);
+      const footer = STRINGS[currentAnsiLocale].ansi.reasoningFooter(secs);
+      this.term.write(`${newline}  ${DIM}${CYAN}╰─${RESET} ${DIM}${MUTED}${footer}${RESET}\r\n\r\n`);
     }
   }
 

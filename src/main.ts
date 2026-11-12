@@ -26,10 +26,12 @@ import {
   formatToolOutputPreview,
   formatToolStart,
   isShellCommandTool,
+  setAnsiLocale,
   setAnsiTheme,
   type AgentCommandRecord,
   type TerminalSnapshot,
 } from "./ansi";
+import { STRINGS, resolveLocale, type AppLocale } from "./i18n";
 import { matchesShortcut } from "./keybindings";
 import {
   collectPaneIds,
@@ -120,10 +122,12 @@ interface PaneState {
   leafEl: HTMLDivElement;
   paneTitleEl: HTMLSpanElement;
   paneBadgeEl: HTMLSpanElement;
+  paneCloseBtn: HTMLButtonElement;
   termWrapEl: HTMLDivElement;
   term: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  webglAddon: WebglAddon | null;
   model: string;
   effort: string;
   sessionId: string | null;
@@ -189,6 +193,9 @@ class VeltApp {
 
   private config!: VeltConfig;
   private configPath = "";
+  private systemLocale = "en";
+  private currentLocale: AppLocale = "en";
+  private isWindowMaximized = false;
   private models: ModelInfo[] = [];
   private ocStatus: OpenCodeStatus = { available: false };
   private tabs = new Map<string, TabState>();
@@ -208,8 +215,14 @@ class VeltApp {
     this.switcher = new ModelSwitcherModal(this.root);
     this.settingsModal = new SettingsModal(this.root);
 
-    this.config = await invoke<VeltConfig>("get_config");
-    this.configPath = await invoke<string>("get_config_path");
+    const [cfg, cfgPath, sysLocale] = await Promise.all([
+      invoke<VeltConfig>("get_config"),
+      invoke<string>("get_config_path"),
+      invoke<string>("get_system_locale").catch(() => "en"),
+    ]);
+    this.config = cfg;
+    this.configPath = cfgPath;
+    this.systemLocale = sysLocale;
     this.applyAppearanceConfig();
 
     await this.setupListeners();
@@ -226,6 +239,7 @@ class VeltApp {
   }
 
   private renderLayout(): void {
+    const t = STRINGS[this.currentLocale];
     const resizeDirs: Array<{ cls: string; dir: ResizeDir }> = [
       { cls: "n", dir: "North" },
       { cls: "s", dir: "South" },
@@ -250,25 +264,25 @@ class VeltApp {
           </div>
           <div class="velt-tabs" data-role="tabs" data-tauri-drag-region></div>
           <div class="velt-top-actions">
-            <button type="button" class="velt-icon-btn" data-action="split-v" title="Dividi a destra (${this.config?.keybindings?.split_vertical || "Ctrl+Shift+D"})">${iconSplitVertical(14)}</button>
-            <button type="button" class="velt-icon-btn" data-action="split-h" title="Dividi in basso (${this.config?.keybindings?.split_horizontal || "Ctrl+Shift+B"})">${iconSplitHorizontal(14)}</button>
-            <button type="button" class="velt-icon-btn" data-action="new-tab" title="Nuovo Tab (Ctrl+T)">${iconPlus(14)}</button>
-            <button type="button" class="velt-icon-btn" data-action="find" title="Cerca (Ctrl+Shift+F)">${iconSearch(14)}</button>
-            <button type="button" class="velt-icon-btn" data-action="settings" title="Impostazioni (Ctrl+,)">${iconGear(14)}</button>
+            <button type="button" class="velt-icon-btn" data-action="split-v" title="${escapeAttr(`${t.topbar.splitV} (${this.config?.keybindings?.split_vertical || "Ctrl+Shift+D"})`)}">${iconSplitVertical(14)}</button>
+            <button type="button" class="velt-icon-btn" data-action="split-h" title="${escapeAttr(`${t.topbar.splitH} (${this.config?.keybindings?.split_horizontal || "Ctrl+Shift+B"})`)}">${iconSplitHorizontal(14)}</button>
+            <button type="button" class="velt-icon-btn" data-action="new-tab" title="${escapeAttr(`${t.topbar.newTab} (Ctrl+T)`)}">${iconPlus(14)}</button>
+            <button type="button" class="velt-icon-btn" data-action="find" title="${escapeAttr(`${t.topbar.find} (Ctrl+Shift+F)`)}">${iconSearch(14)}</button>
+            <button type="button" class="velt-icon-btn" data-action="settings" title="${escapeAttr(`${t.topbar.settings} (${this.config?.keybindings?.open_settings || "Ctrl+,"})`)}">${iconGear(14)}</button>
             <span class="velt-top-sep"></span>
             <div class="velt-win-controls">
-              <button type="button" class="velt-win-btn" data-action="win-min" title="Minimizza">${iconWinMinimize(12)}</button>
-              <button type="button" class="velt-win-btn" data-action="win-max" title="Ingrandisci">${iconWinMaximize(11)}</button>
-              <button type="button" class="velt-win-btn close" data-action="win-close" title="Chiudi">${iconWinClose(12)}</button>
+              <button type="button" class="velt-win-btn" data-action="win-min" title="${escapeAttr(t.topbar.minimize)}">${iconWinMinimize(12)}</button>
+              <button type="button" class="velt-win-btn" data-action="win-max" title="${escapeAttr(t.topbar.maximize)}">${iconWinMaximize(11)}</button>
+              <button type="button" class="velt-win-btn close" data-action="win-close" title="${escapeAttr(t.topbar.close)}">${iconWinClose(12)}</button>
             </div>
           </div>
         </header>
 
         <div class="velt-find-bar hidden" data-role="find-bar">
-          <input type="text" class="velt-input" data-role="find-input" placeholder="Cerca nello scrollback..." />
-          <button type="button" class="velt-btn velt-btn-ghost" data-action="find-prev" title="Precedente">${iconArrowUp(13)}</button>
-          <button type="button" class="velt-btn velt-btn-ghost" data-action="find-next" title="Successivo">${iconArrowDown(13)}</button>
-          <button type="button" class="velt-icon-btn" data-action="find-close" title="Chiudi">${iconClose(13)}</button>
+          <input type="text" class="velt-input" data-role="find-input" placeholder="${escapeAttr(t.find.placeholder)}" />
+          <button type="button" class="velt-btn velt-btn-ghost" data-action="find-prev" title="${escapeAttr(t.find.prev)}">${iconArrowUp(13)}</button>
+          <button type="button" class="velt-btn velt-btn-ghost" data-action="find-next" title="${escapeAttr(t.find.next)}">${iconArrowDown(13)}</button>
+          <button type="button" class="velt-icon-btn" data-action="find-close" title="${escapeAttr(t.find.close)}">${iconClose(13)}</button>
         </div>
 
         <main class="velt-main" data-role="main">
@@ -276,15 +290,15 @@ class VeltApp {
 
           <div class="velt-agent-dock hidden" data-role="agent-dock">
             <div class="velt-think-live hidden" data-role="think-live">
-              <span class="velt-think-badge">${iconThink(13)} <span>Ragiono</span></span>
-              <span class="velt-think-ticker" data-role="think-ticker">Analizzo il contesto...</span>
+              <span class="velt-think-badge">${iconThink(13)} <span data-role="think-badge-label">${escapeHtml(t.dock.thinkingBadge)}</span></span>
+              <span class="velt-think-ticker" data-role="think-ticker">${escapeHtml(t.dock.thinkingInit)}</span>
               <span class="velt-think-meta" data-role="think-meta">0.0s</span>
             </div>
             <div class="velt-agent-dock-top">
               <div class="velt-agent-dock-left">
-                <span class="velt-agent-pill">${iconAgent(12)} <span>AGENT MODE</span></span>
-                <button type="button" class="velt-ctx-toggle" data-role="ctx-toggle" title="Includi contesto recente del terminale">
-                  ${iconContext(12)} <span>contesto</span>
+                <span class="velt-agent-pill">${iconAgent(12)} <span data-role="agent-badge-label">${escapeHtml(t.dock.agentBadge)}</span></span>
+                <button type="button" class="velt-ctx-toggle" data-role="ctx-toggle" title="${escapeAttr(t.dock.contextTitle)}">
+                  ${iconContext(12)} <span data-role="ctx-label">${escapeHtml(t.dock.contextLabel)}</span>
                 </button>
                 <div class="velt-stream-hud hidden" data-role="stream-hud">
                   ${iconWave(13)}
@@ -293,11 +307,11 @@ class VeltApp {
                 </div>
               </div>
               <div class="velt-agent-dock-right">
-                <span class="velt-agent-hints">
-                  <span class="velt-kbd-cap">Invio</span> invia
-                  <span class="velt-kbd-cap">Shift+Invio</span> a capo
-                  <span class="velt-kbd-cap">/new</span> reset
-                  <span class="velt-kbd-cap">Esc</span> shell
+                <span class="velt-agent-hints" data-role="agent-hints">
+                  <span class="velt-kbd-cap">${escapeHtml(t.dock.hintSendKey)}</span> ${escapeHtml(t.dock.hintSend)}
+                  <span class="velt-kbd-cap">${escapeHtml(t.dock.hintNewlineKey)}</span> ${escapeHtml(t.dock.hintNewline)}
+                  <span class="velt-kbd-cap">/new</span> ${escapeHtml(t.dock.hintReset)}
+                  <span class="velt-kbd-cap">Esc</span> ${escapeHtml(t.dock.hintShell)}
                 </span>
               </div>
             </div>
@@ -306,11 +320,11 @@ class VeltApp {
                 rows="1"
                 class="velt-agent-textarea"
                 data-role="agent-input"
-                placeholder="Parla con OpenCode (spiega un errore, genera un comando, modifica file)..."
+                placeholder="${escapeAttr(t.dock.inputPlaceholder)}"
               ></textarea>
               <div class="velt-agent-actions">
-                <button type="button" class="velt-btn velt-btn-danger hidden" data-action="agent-stop">${iconStop(12)} <span>Stop</span></button>
-                <button type="button" class="velt-btn velt-btn-primary" data-action="agent-send">${iconSend(12)} <span>Invia</span></button>
+                <button type="button" class="velt-btn velt-btn-danger hidden" data-action="agent-stop">${iconStop(12)} <span>${escapeHtml(t.dock.stop)}</span></button>
+                <button type="button" class="velt-btn velt-btn-primary" data-action="agent-send">${iconSend(12)} <span>${escapeHtml(t.dock.send)}</span></button>
               </div>
             </div>
           </div>
@@ -318,15 +332,15 @@ class VeltApp {
 
         <footer class="velt-statusbar">
           <div class="velt-status-left">
-            <button type="button" class="velt-mode-btn" data-role="mode-btn">${iconTerminal(12)} <span>SHELL</span></button>
+            <button type="button" class="velt-mode-btn" data-role="mode-btn">${iconTerminal(12)} <span>${escapeHtml(t.status.shellMode)}</span></button>
             <span class="velt-cwd" data-role="cwd">~</span>
           </div>
           <div class="velt-status-right">
-            <button type="button" class="velt-cmd-pill hidden" data-role="cmd-pill" title="Incolla ultimo comando suggerito nella shell">
-              ${iconCommandInsert(12)} <span>Incolla comando</span>
+            <button type="button" class="velt-cmd-pill hidden" data-role="cmd-pill" title="${escapeAttr(t.status.insertCmdTitle)}">
+              ${iconCommandInsert(12)} <span>${escapeHtml(t.status.insertCmdLabel)}</span>
             </button>
-            <span class="velt-oc-dot" data-role="oc-dot" title="Stato OpenCode CLI"></span>
-            <button type="button" class="velt-model-pill" data-role="model-pill" title="Cambia modello & reasoning effort">
+            <span class="velt-oc-dot" data-role="oc-dot" title="${escapeAttr(t.status.ocStatusTitle)}"></span>
+            <button type="button" class="velt-model-pill" data-role="model-pill" title="${escapeAttr(t.status.modelPillTitle)}">
               ${iconCpu(12)}
               <span class="model-name">...</span>
               <span class="effort">...</span>
@@ -335,7 +349,7 @@ class VeltApp {
         </footer>
 
         <div class="velt-drop-overlay hidden" data-role="drop-overlay">
-          <div class="velt-drop-card">Rilascia file o cartelle per inserire i percorsi</div>
+          <div class="velt-drop-card" data-role="drop-card">${escapeHtml(t.drop.card)}</div>
         </div>
 
         <div class="velt-toast-stack" data-role="toasts"></div>
@@ -423,9 +437,11 @@ class VeltApp {
     const syncMaxState = async () => {
       try {
         const isMax = await appWin.isMaximized();
+        this.isWindowMaximized = isMax;
         this.shellEl.classList.toggle("maximized", isMax);
         this.winMaxBtn.innerHTML = isMax ? iconWinRestore(11) : iconWinMaximize(11);
-        this.winMaxBtn.title = isMax ? "Ripristina" : "Ingrandisci";
+        const topStrings = STRINGS[this.currentLocale].topbar;
+        this.winMaxBtn.title = isMax ? topStrings.restore : topStrings.maximize;
       } catch {
         // ignore
       }
@@ -451,6 +467,7 @@ class VeltApp {
       }
     });
     this.findInputEl.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Enter") {
         e.preventDefault();
         const pane = this.activePane();
@@ -472,9 +489,8 @@ class VeltApp {
       if (!pane) return;
       pane.includeContext = !pane.includeContext;
       this.updateStatusBar();
-      this.showToast(
-        pane.includeContext ? "Contesto terminale attivo" : "Contesto terminale disattivato"
-      );
+      const toasts = STRINGS[this.currentLocale].toasts;
+      this.showToast(pane.includeContext ? toasts.contextOn : toasts.contextOff);
       this.agentInputEl.focus();
     });
 
@@ -483,6 +499,7 @@ class VeltApp {
 
     this.agentInputEl.addEventListener("input", () => this.autoSizeTextarea());
     this.agentInputEl.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return;
       const pane = this.activePane();
       if (!pane) return;
 
@@ -563,6 +580,7 @@ class VeltApp {
     window.addEventListener(
       "keydown",
       (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
         if (this.contextMenuEl && e.key === "Escape") {
           e.preventDefault();
           this.closeContextMenu();
@@ -573,6 +591,75 @@ class VeltApp {
       },
       { capture: true }
     );
+  }
+
+  private updateChromeTexts(): void {
+    const t = STRINGS[this.currentLocale];
+    const kb = this.config?.keybindings;
+
+    const setTitle = (sel: string, val: string) => {
+      const el = this.root.querySelector<HTMLElement>(sel);
+      if (el) el.title = val;
+    };
+    const setText = (sel: string, val: string) => {
+      const el = this.root.querySelector<HTMLElement>(sel);
+      if (el) el.textContent = val;
+    };
+
+    setTitle(
+      '[data-action="split-v"]',
+      `${t.topbar.splitV} (${kb?.split_vertical || "Ctrl+Shift+D"})`
+    );
+    setTitle(
+      '[data-action="split-h"]',
+      `${t.topbar.splitH} (${kb?.split_horizontal || "Ctrl+Shift+B"})`
+    );
+    setTitle('[data-action="new-tab"]', `${t.topbar.newTab} (Ctrl+T)`);
+    setTitle('[data-action="find"]', `${t.topbar.find} (Ctrl+Shift+F)`);
+    setTitle(
+      '[data-action="settings"]',
+      `${t.topbar.settings} (${kb?.open_settings || "Ctrl+,"})`
+    );
+    setTitle('[data-action="win-min"]', t.topbar.minimize);
+    this.winMaxBtn.title = this.isWindowMaximized ? t.topbar.restore : t.topbar.maximize;
+    setTitle('[data-action="win-close"]', t.topbar.close);
+
+    this.findInputEl.placeholder = t.find.placeholder;
+    setTitle('[data-action="find-prev"]', t.find.prev);
+    setTitle('[data-action="find-next"]', t.find.next);
+    setTitle('[data-action="find-close"]', t.find.close);
+
+    setText('[data-role="think-badge-label"]', t.dock.thinkingBadge);
+    setText('[data-role="agent-badge-label"]', t.dock.agentBadge);
+    this.ctxToggleBtn.title = t.dock.contextTitle;
+    setText('[data-role="ctx-label"]', t.dock.contextLabel);
+
+    const hintsEl = this.root.querySelector<HTMLElement>('[data-role="agent-hints"]');
+    if (hintsEl) {
+      hintsEl.innerHTML = `
+        <span class="velt-kbd-cap">${escapeHtml(t.dock.hintSendKey)}</span> ${escapeHtml(t.dock.hintSend)}
+        <span class="velt-kbd-cap">${escapeHtml(t.dock.hintNewlineKey)}</span> ${escapeHtml(t.dock.hintNewline)}
+        <span class="velt-kbd-cap">/new</span> ${escapeHtml(t.dock.hintReset)}
+        <span class="velt-kbd-cap">Esc</span> ${escapeHtml(t.dock.hintShell)}
+      `;
+    }
+
+    this.agentInputEl.placeholder = t.dock.inputPlaceholder;
+    setText('[data-action="agent-stop"] span', t.dock.stop);
+    setText('[data-action="agent-send"] span', t.dock.send);
+
+    this.cmdPillEl.title = t.status.insertCmdTitle;
+    setText('[data-role="cmd-pill"] span', t.status.insertCmdLabel);
+    this.modelPillEl.title = t.status.modelPillTitle;
+    setText('[data-role="drop-card"]', t.drop.card);
+
+    for (const p of this.panes.values()) {
+      p.paneCloseBtn.title = t.terminal.paneClose;
+    }
+
+    this.updateModeUI();
+    this.renderTabs();
+    this.updateStatusBar();
   }
 
   private handleGlobalShortcut(e: KeyboardEvent): void {
@@ -756,7 +843,7 @@ class VeltApp {
       e.preventDefault();
       e.stopPropagation();
       this.activePane()?.term.clear();
-      this.showToast("Scrollback pulito");
+      this.showToast(STRINGS[this.currentLocale].toasts.scrollbackCleared);
       return;
     }
 
@@ -766,7 +853,7 @@ class VeltApp {
         e.preventDefault();
         e.stopPropagation();
         void navigator.clipboard.writeText(pane.term.getSelection());
-        this.showToast("Testo copiato");
+        this.showToast(STRINGS[this.currentLocale].toasts.textCopied);
       }
       return;
     }
@@ -831,7 +918,7 @@ class VeltApp {
       this.autoSizeTextarea();
       this.agentInputEl.focus();
     } else {
-      void invoke("pty_write", { tabId: pane.id, data: txt });
+      pane.term.paste(txt);
       pane.term.focus();
     }
   }
@@ -866,7 +953,7 @@ class VeltApp {
     } else {
       pane.term.selectAll();
     }
-    this.showToast("Tutto il testo selezionato");
+    this.showToast(STRINGS[this.currentLocale].toasts.allSelected);
   }
 
   private adjustFontSize(delta: number): void {
@@ -879,7 +966,7 @@ class VeltApp {
     const tab = this.activeTab();
     if (tab) this.fitTabPanes(tab, true);
     void invoke("save_config", { config: this.config }).catch(() => undefined);
-    this.showToast(`Font: ${next}px`);
+    this.showToast(STRINGS[this.currentLocale].toasts.fontSize(next));
   }
 
   private resetFontSize(): void {
@@ -890,7 +977,7 @@ class VeltApp {
     const tab = this.activeTab();
     if (tab) this.fitTabPanes(tab, true);
     void invoke("save_config", { config: this.config }).catch(() => undefined);
-    this.showToast("Font ripristinato: 14px");
+    this.showToast(STRINGS[this.currentLocale].toasts.fontReset);
   }
 
   private openTerminalContextMenu(x: number, y: number): void {
@@ -899,6 +986,7 @@ class VeltApp {
     const pane = this.activePane();
     if (!tab || !pane) return;
 
+    const t = STRINGS[this.currentLocale];
     const hasSelection = pane.term.hasSelection();
     const selectedText = hasSelection ? pane.term.getSelection() : "";
     const paneCount = countPanes(tab.rootNode);
@@ -918,8 +1006,8 @@ class VeltApp {
       btn.className = `velt-ctx-item ${opts?.accent ? "accent" : ""}`;
       btn.disabled = Boolean(opts?.disabled);
       btn.innerHTML = `
-        <span class="velt-ctx-item-left">${iconHtml}<span>${label}</span></span>
-        ${shortcut ? `<span class="velt-kbd-cap">${shortcut}</span>` : ""}
+        <span class="velt-ctx-item-left">${iconHtml}<span>${escapeHtml(label)}</span></span>
+        ${shortcut ? `<span class="velt-kbd-cap">${escapeHtml(shortcut)}</span>` : ""}
       `;
       btn.addEventListener("click", () => {
         this.closeContextMenu();
@@ -936,24 +1024,24 @@ class VeltApp {
 
     addItem(
       iconCopy(13),
-      "Copia",
+      t.contextMenu.copy,
       "Ctrl+Shift+C",
       () => {
         if (selectedText) {
           void navigator.clipboard.writeText(selectedText);
-          this.showToast("Testo copiato");
+          this.showToast(t.toasts.textCopied);
         }
       },
       { disabled: !hasSelection }
     );
 
-    addItem(iconPaste(13), "Incolla", "Ctrl+Shift+V", () => {
+    addItem(iconPaste(13), t.contextMenu.paste, "Ctrl+Shift+V", () => {
       void this.pasteIntoPane(pane, false);
     });
 
     addItem(
       iconSelectAll(13),
-      "Seleziona tutto",
+      t.contextMenu.selectAll,
       this.config.keybindings.select_all,
       () => {
         this.selectAllInActivePane();
@@ -965,11 +1053,11 @@ class VeltApp {
     if (hasSelection) {
       addItem(
         iconAgent(13),
-        "Chiedi a OpenCode sulla selezione",
+        t.contextMenu.askSelection,
         "",
         () => {
           this.setPaneMode(pane, "agent");
-          this.agentInputEl.value = `Spiega o risolvi questo output:\n\`\`\`\n${selectedText.slice(0, 2500)}\n\`\`\`\n`;
+          this.agentInputEl.value = t.contextMenu.askSelectionPrompt(selectedText.slice(0, 2500));
           this.autoSizeTextarea();
           this.agentInputEl.focus();
         },
@@ -977,11 +1065,11 @@ class VeltApp {
       );
       addItem(
         iconSend(13),
-        "Invia subito selezione a OpenCode",
+        t.contextMenu.sendSelection,
         "",
         () => {
           this.setPaneMode(pane, "agent");
-          this.agentInputEl.value = `Analizza questo output del terminale e dimmi cosa fare:\n\`\`\`\n${selectedText.slice(0, 2500)}\n\`\`\``;
+          this.agentInputEl.value = t.contextMenu.sendSelectionPrompt(selectedText.slice(0, 2500));
           this.autoSizeTextarea();
           void this.submitAgentPrompt();
         },
@@ -990,7 +1078,7 @@ class VeltApp {
     } else {
       addItem(
         iconAgent(13),
-        pane.mode === "agent" ? "Torna a Shell Mode" : "Attiva Agent Mode",
+        pane.mode === "agent" ? t.contextMenu.toShellMode : t.contextMenu.toAgentMode,
         this.config.keybindings.toggle_agent,
         () => {
           this.toggleAgentMode();
@@ -1003,7 +1091,7 @@ class VeltApp {
 
     addItem(
       iconSplitVertical(13),
-      "Dividi a destra",
+      t.contextMenu.splitRight,
       this.config.keybindings.split_vertical,
       () => {
         void this.splitActivePane("vertical");
@@ -1012,7 +1100,7 @@ class VeltApp {
 
     addItem(
       iconSplitHorizontal(13),
-      "Dividi in basso",
+      t.contextMenu.splitDown,
       this.config.keybindings.split_horizontal,
       () => {
         void this.splitActivePane("horizontal");
@@ -1022,7 +1110,7 @@ class VeltApp {
     if (paneCount > 1) {
       addItem(
         iconPaneClose(13),
-        "Chiudi riquadro",
+        t.contextMenu.closePane,
         this.config.keybindings.close_pane,
         () => {
           void this.closePane(pane.id);
@@ -1032,12 +1120,12 @@ class VeltApp {
 
     addSep();
 
-    addItem(iconClear(13), "Pulisci scrollback", "Ctrl+Shift+L", () => {
+    addItem(iconClear(13), t.contextMenu.clearScrollback, "Ctrl+Shift+L", () => {
       pane.term.clear();
-      this.showToast("Scrollback pulito");
+      this.showToast(t.toasts.scrollbackCleared);
     });
 
-    addItem(iconPalette(13), "Cambia tema & trasparenza...", "", () => {
+    addItem(iconPalette(13), t.contextMenu.themeTransparency, "", () => {
       this.openSettings("terminal");
     });
 
@@ -1081,6 +1169,7 @@ class VeltApp {
   }
 
   private syncThinkingDock(): void {
+    const dockStrings = STRINGS[this.currentLocale].dock;
     const pane = this.activePane();
     const liveBarEnabled = this.config?.agent_live_think_bar !== false;
     const show = Boolean(
@@ -1091,12 +1180,14 @@ class VeltApp {
       this.streamLabelEl.textContent = "OpenCode";
       return;
     }
-    this.streamLabelEl.textContent = pane.isThinking ? "Ragiono..." : "Scrivo...";
+    this.streamLabelEl.textContent = pane.isThinking
+      ? dockStrings.streamingThink
+      : dockStrings.streamingWrite;
     if (!show) return;
 
     const raw = pane.liveThinkText.trim();
     if (!raw) {
-      this.thinkTickerEl.textContent = "Analizzo il contesto...";
+      this.thinkTickerEl.textContent = dockStrings.thinkingInit;
     } else if (raw.length > 130) {
       this.thinkTickerEl.textContent = `... ${raw.slice(-126)}`;
     } else {
@@ -1131,9 +1222,8 @@ class VeltApp {
         void this.closePane(pane.id);
         return;
       }
-      pane.term.write(
-        `\r\n${MUTED}[Processo terminato${event.payload.code !== null ? ` (exit ${event.payload.code})` : ""}]${RESET}\r\n`
-      );
+      const exitMsg = STRINGS[this.currentLocale].terminal.processExited(event.payload.code);
+      pane.term.write(`\r\n${MUTED}${exitMsg}${RESET}\r\n`);
       if (this.tabOrder.length > 1) {
         void this.closeTab(pane.tabId);
       }
@@ -1157,8 +1247,9 @@ class VeltApp {
         if (!pane) return;
         const formatted = paths.map(shellQuotePath).join(" ") + " ";
         this.insertTextInTarget(pane, formatted);
+        const toasts = STRINGS[this.currentLocale].toasts;
         this.showToast(
-          paths.length === 1 ? "Percorso inserito" : `${paths.length} percorsi inseriti`
+          paths.length === 1 ? toasts.droppedOne : toasts.droppedMany(paths.length)
         );
       }
     });
@@ -1200,7 +1291,7 @@ class VeltApp {
       rec = {
         id: ev.toolId ?? undefined,
         toolName: ev.toolName || "shell",
-        command: cmd || "(comando shell)",
+        command: cmd || STRINGS[this.currentLocale].ansi.shellFallbackCmd,
         ok: ev.toolOk ?? true,
       };
       pane.agentVisitCommands.push(rec);
@@ -1297,7 +1388,8 @@ class VeltApp {
         if (cmd) pane.lastSuggestedCommand = cmd;
         if (writeAgentUi) {
           if (ev.text === "canceled") {
-            pane.term.write(`\r\n  ${MUTED}:: Generazione interrotta${RESET}\r\n`);
+            const stopped = STRINGS[this.currentLocale].terminal.generationStopped;
+            pane.term.write(`\r\n  ${MUTED}${stopped}${RESET}\r\n`);
           }
           pane.term.write(
             formatAgentFooter(
@@ -1322,9 +1414,8 @@ class VeltApp {
       case "error":
         if (writeAgentUi) {
           pane.streamWriter?.finish();
-          pane.term.write(
-            `\r\n  ${RED}[err] Errore OpenCode: ${ev.text || "Errore sconosciuto"}${RESET}\r\n`
-          );
+          const errMsg = STRINGS[this.currentLocale].terminal.opencodeError(ev.text || "");
+          pane.term.write(`\r\n  ${RED}[err] ${errMsg}${RESET}\r\n`);
         }
         pane.isStreaming = false;
         pane.isThinking = false;
@@ -1362,9 +1453,35 @@ class VeltApp {
         }
       }
     } catch {
-      this.ocStatus = { available: false, error: "Impossibile interrogare opencode-cli" };
+      this.ocStatus = {
+        available: false,
+        error: STRINGS[this.currentLocale].terminal.opencodeUnavailable,
+      };
     }
     this.updateStatusBar();
+  }
+
+  private syncPaneWebgl(pane: PaneState, enabled: boolean): void {
+    if (enabled && !pane.webglAddon) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webgl.dispose();
+          if (pane.webglAddon === webgl) pane.webglAddon = null;
+        });
+        pane.term.loadAddon(webgl);
+        pane.webglAddon = webgl;
+      } catch {
+        pane.webglAddon = null;
+      }
+    } else if (!enabled && pane.webglAddon) {
+      try {
+        pane.webglAddon.dispose();
+      } catch {
+        // ignore
+      }
+      pane.webglAddon = null;
+    }
   }
 
   private buildPaneState(tabId: string, startCwd: string | null): PaneState {
@@ -1387,7 +1504,7 @@ class VeltApp {
     const paneCloseBtn = document.createElement("button");
     paneCloseBtn.type = "button";
     paneCloseBtn.className = "velt-pane-close";
-    paneCloseBtn.title = "Chiudi riquadro";
+    paneCloseBtn.title = STRINGS[this.currentLocale].terminal.paneClose;
     paneCloseBtn.innerHTML = iconClose(10);
     paneCloseBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1429,13 +1546,6 @@ class VeltApp {
     );
 
     term.open(termWrapEl);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // Canvas renderer fallback is automatic.
-    }
 
     const pane: PaneState = {
       id,
@@ -1446,10 +1556,12 @@ class VeltApp {
       leafEl,
       paneTitleEl,
       paneBadgeEl,
+      paneCloseBtn,
       termWrapEl,
       term,
       fitAddon,
       searchAddon,
+      webglAddon: null,
       model: this.config.default_model,
       effort: this.config.default_effort,
       sessionId: null,
@@ -1471,6 +1583,8 @@ class VeltApp {
       liveThinkText: "",
       thinkStartedAt: null,
     };
+
+    this.syncPaneWebgl(pane, this.config.webgl_renderer !== false);
 
     leafEl.addEventListener("mousedown", () => {
       if (this.activePane()?.id !== pane.id) {
@@ -1524,6 +1638,7 @@ class VeltApp {
     });
 
     term.attachCustomKeyEventHandler((e) => {
+      if (e.isComposing || e.keyCode === 229) return true;
       if (e.type === "keydown" && this.isVeltShortcut(e)) {
         return false;
       }
@@ -1567,7 +1682,8 @@ class VeltApp {
       this.renderTabs();
       this.updateStatusBar();
     } catch (err) {
-      pane.term.write(`${RED}Impossibile avviare la shell: ${String(err)}${RESET}\r\n`);
+      const msg = STRINGS[this.currentLocale].terminal.shellStartError(String(err));
+      pane.term.write(`${RED}${msg}${RESET}\r\n`);
     }
   }
 
@@ -1755,6 +1871,7 @@ class VeltApp {
       this.isDraggingSplitter = true;
       splitter.classList.add("dragging");
       const rect = wrap.getBoundingClientRect();
+      let rafId: number | null = null;
 
       const onMove = (mv: MouseEvent) => {
         const raw =
@@ -1765,7 +1882,12 @@ class VeltApp {
         node.ratio = clamped;
         firstSlot.style.flex = `${clamped} 1 0%`;
         secondSlot.style.flex = `${1 - clamped} 1 0%`;
-        this.fitTabPanes(tab, true);
+        if (rafId === null) {
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            this.fitTabPanes(tab, false);
+          });
+        }
       };
 
       const onUp = () => {
@@ -1773,6 +1895,10 @@ class VeltApp {
         splitter.classList.remove("dragging");
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
         this.fitTabPanes(tab, true);
       };
 
@@ -1985,6 +2111,7 @@ class VeltApp {
     const pane = this.activePane();
     const isAgent = pane?.mode === "agent";
     const streaming = Boolean(pane?.isStreaming);
+    const statusStrings = STRINGS[this.currentLocale].status;
 
     this.mainEl.classList.toggle("agent-mode", Boolean(isAgent));
     this.mainEl.classList.toggle("agent-streaming", Boolean(isAgent && streaming));
@@ -1994,8 +2121,8 @@ class VeltApp {
 
     this.modeBtn.classList.toggle("agent", Boolean(isAgent));
     this.modeBtn.innerHTML = isAgent
-      ? `${iconAgent(12)} <span>AGENT</span>`
-      : `${iconTerminal(12)} <span>SHELL</span>`;
+      ? `${iconAgent(12)} <span>${escapeHtml(statusStrings.agentMode)}</span>`
+      : `${iconTerminal(12)} <span>${escapeHtml(statusStrings.shellMode)}</span>`;
 
     this.agentStopBtn.classList.toggle("hidden", !streaming);
     this.agentSendBtn.classList.toggle("hidden", streaming);
@@ -2010,6 +2137,8 @@ class VeltApp {
 
     const raw = this.agentInputEl.value.trim();
     if (!raw) return;
+
+    const t = STRINGS[this.currentLocale];
 
     if (raw === "/new") {
       this.agentInputEl.value = "";
@@ -2028,13 +2157,13 @@ class VeltApp {
       this.autoSizeTextarea();
       const kb = this.config.keybindings;
       pane.term.write(
-        `\r\n${CYAN}[V] Comandi rapidi Velt Agent:${RESET}\r\n` +
-          `  ${CYAN}${kb.toggle_agent}${RESET} / ${CYAN}Esc${RESET}  Torna alla shell (mantiene lo scrollback)\r\n` +
-          `  ${CYAN}${kb.model_switcher}${RESET}        Cambia modello, reasoning effort o preset\r\n` +
-          `  ${CYAN}${kb.cycle_effort}${RESET}        Cicla solo il reasoning effort\r\n` +
-          `  ${CYAN}${kb.insert_command}${RESET}    Incolla comando suggerito nella shell\r\n` +
-          `  ${CYAN}${kb.select_all}${RESET}        Seleziona tutto il testo\r\n` +
-          `  ${CYAN}/new${RESET} · ${CYAN}/clear${RESET}       Nuova sessione OpenCode / pulisci scrollback\r\n\r\n`
+        `\r\n${CYAN}${t.terminal.helpTitle}${RESET}\r\n` +
+          `  ${CYAN}${kb.toggle_agent}${RESET} / ${CYAN}Esc${RESET}  ${t.terminal.helpToggle}\r\n` +
+          `  ${CYAN}${kb.model_switcher}${RESET}        ${t.terminal.helpSwitcher}\r\n` +
+          `  ${CYAN}${kb.cycle_effort}${RESET}        ${t.terminal.helpEffort}\r\n` +
+          `  ${CYAN}${kb.insert_command}${RESET}    ${t.terminal.helpInsert}\r\n` +
+          `  ${CYAN}${kb.select_all}${RESET}        ${t.terminal.helpSelectAll}\r\n` +
+          `  ${CYAN}/new${RESET} · ${CYAN}/clear${RESET}       ${t.terminal.helpSession}\r\n\r\n`
       );
       return;
     }
@@ -2054,9 +2183,14 @@ class VeltApp {
       pane.wroteAgentInVisit = true;
     }
 
-    const recentCtx = pane.includeContext
-      ? extractRecentContext(pane.term, this.config.context_lines)
-      : "";
+    const redactEnabled = this.config.redact_secrets !== false;
+    const ctxResult = pane.includeContext
+      ? extractRecentContext(pane.term, this.config.context_lines, redactEnabled)
+      : { text: "", redactedCount: 0 };
+    const recentCtx = ctxResult.text;
+    if (ctxResult.redactedCount > 0) {
+      this.showToast(t.toasts.secretsRedacted(ctxResult.redactedCount));
+    }
 
     pane.term.write(
       formatAgentPromptHeader(
@@ -2101,7 +2235,8 @@ class VeltApp {
       pane.isStreaming = false;
       pane.streamStartedAt = null;
       pane.streamWriter = null;
-      pane.term.write(`\r\n  ${RED}[err] Errore invio a OpenCode: ${String(err)}${RESET}\r\n`);
+      const errMsg = STRINGS[this.currentLocale].terminal.sendError(String(err));
+      pane.term.write(`\r\n  ${RED}[err] ${errMsg}${RESET}\r\n`);
       this.updateModeUI();
       this.renderTabs();
     }
@@ -2125,8 +2260,9 @@ class VeltApp {
       pane.pendingPtyChunks = [];
       pane.wroteAgentInVisit = true;
     }
-    pane.term.write(`\r\n  ${CYAN}[V] Nuova sessione OpenCode avviata per questo riquadro${RESET}\r\n`);
-    this.showToast("Nuova sessione OpenCode");
+    const t = STRINGS[this.currentLocale];
+    pane.term.write(`\r\n  ${CYAN}${t.terminal.newSessionNotice}${RESET}\r\n`);
+    this.showToast(t.toasts.newSession);
   }
 
   private async insertLastSuggestedCommand(): Promise<void> {
@@ -2139,7 +2275,7 @@ class VeltApp {
     setTimeout(() => {
       void invoke("pty_write", { tabId: pane.id, data: cmd });
       pane.term.focus();
-      this.showToast("Comando inserito nel prompt");
+      this.showToast(STRINGS[this.currentLocale].toasts.commandInserted);
     }, 30);
   }
 
@@ -2151,6 +2287,7 @@ class VeltApp {
       this.config,
       pane.model,
       pane.effort,
+      this.currentLocale,
       async (res) => {
         pane.model = res.model;
         pane.effort = res.effort;
@@ -2181,7 +2318,7 @@ class VeltApp {
     const next = efforts[(Math.max(0, idx) + 1) % efforts.length];
     pane.effort = next;
     this.updateStatusBar();
-    this.showToast(`Reasoning Effort -> ${next}`);
+    this.showToast(STRINGS[this.currentLocale].toasts.effortChanged(next));
   }
 
   private openSettings(initialSection: SettingsSection = "ai"): void {
@@ -2209,7 +2346,7 @@ class VeltApp {
         this.syncThinkingDock();
         await this.refreshOpenCodeMetadata();
         this.updateStatusBar();
-        this.showToast("Impostazioni salvate");
+        this.showToast(STRINGS[this.currentLocale].toasts.settingsSaved);
       },
       () => {
         this.applyAppearanceConfig(this.config);
@@ -2225,11 +2362,21 @@ class VeltApp {
       (previewCfg) => {
         this.applyAppearanceConfig(previewCfg);
       },
-      initialSection
+      initialSection,
+      this.systemLocale
     );
   }
 
+  private applyLocale(cfg: VeltConfig): void {
+    this.currentLocale = resolveLocale(cfg.language, this.systemLocale);
+    document.documentElement.lang = this.currentLocale;
+    setAnsiLocale(this.currentLocale);
+    this.switcher.setLocale(this.currentLocale);
+    this.updateChromeTexts();
+  }
+
   private applyAppearanceConfig(cfg: VeltConfig = this.config): void {
+    this.applyLocale(cfg);
     const theme = getThemeById(cfg.theme);
     const rootStyle = document.documentElement.style;
     const opacity = Math.min(1, Math.max(0.35, cfg.opacity ?? 0.92));
@@ -2285,6 +2432,7 @@ class VeltApp {
       p.term.options.lineHeight = cfg.line_height;
       p.term.options.cursorStyle = cfg.cursor_style;
       p.term.options.cursorBlink = cfg.cursor_blink !== false;
+      this.syncPaneWebgl(p, cfg.webgl_renderer !== false);
     }
 
     requestAnimationFrame(() => {
@@ -2337,6 +2485,7 @@ class VeltApp {
   private renderTabs(): void {
     this.tabsEl.innerHTML = "";
     const showIndex = this.tabOrder.length > 1;
+    const termStrings = STRINGS[this.currentLocale].terminal;
     this.tabOrder.forEach((id, index) => {
       const tab = this.tabs.get(id);
       if (!tab) return;
@@ -2350,12 +2499,12 @@ class VeltApp {
 
       const btn = document.createElement("div");
       btn.className = `velt-tab ${id === this.activeTabId ? "active" : ""} ${anyAgent ? "agent-active" : ""} ${anyStreaming ? "streaming" : ""}`;
-      btn.title = index < 9 ? `${tabTitle} (Ctrl+${index + 1})` : tabTitle;
+      btn.title = termStrings.tabTooltip(tabTitle, index);
       btn.innerHTML = `
         <span class="velt-tab-dot"></span>
         ${showIndex && index < 9 ? `<span class="velt-tab-num">${index + 1}</span>` : ""}
         <span class="velt-tab-title"></span>
-        <button type="button" class="velt-tab-close" title="Chiudi tab">${iconClose(11)}</button>
+        <button type="button" class="velt-tab-close" title="${escapeAttr(termStrings.closeTab)}">${iconClose(11)}</button>
       `;
       const titleEl = btn.querySelector(".velt-tab-title")!;
       titleEl.textContent = tabTitle;
@@ -2375,6 +2524,7 @@ class VeltApp {
 
   private updateStatusBar(): void {
     const pane = this.activePane();
+    const statusStrings = STRINGS[this.currentLocale].status;
     const showModelControls = Boolean(
       pane && (pane.mode === "agent" || this.config?.show_model_in_shell)
     );
@@ -2395,9 +2545,21 @@ class VeltApp {
 
     this.ocDotEl.className = `velt-oc-dot ${this.ocStatus.available ? "ok" : "err"} ${showModelControls ? "" : "hidden"}`;
     this.ocDotEl.title = this.ocStatus.available
-      ? `OpenCode connesso (${this.ocStatus.version || "cli"})`
-      : this.ocStatus.error || "OpenCode non trovato";
+      ? statusStrings.ocConnected(this.ocStatus.version || "cli")
+      : this.ocStatus.error || statusStrings.ocNotFound;
   }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s);
 }
 
 function extractDigitKey(e: KeyboardEvent): number | null {

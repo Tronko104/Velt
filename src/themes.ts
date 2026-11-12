@@ -415,6 +415,26 @@ export function getThemeById(id: string | undefined | null): VeltTheme {
   return VELT_THEMES.find((t) => t.id === id) || VELT_THEMES[0];
 }
 
+const THEME_TAGLINES_EN: Record<string, string> = {
+  "velt-obsidian": "Obsidian black & electric cyan",
+  "tokyo-night": "Sapphire night & neon indigo",
+  "catppuccin-mocha": "Velvet lavender & pastel tones",
+  "nord": "Polar ice & Nordic slate",
+  "gruvbox-dark": "Warm graphite & retro gold",
+  "rose-pine": "Plum ink & rose gold",
+  "dracula": "Gothic violet & bright mint",
+  "kanagawa": "Japanese ink & blue waves",
+  "monokai-pro": "Editorial charcoal & vivid gold",
+  "solarized-dark": "Classic teal & seafoam green",
+};
+
+export function getThemeTagline(theme: VeltTheme, locale: "it" | "en"): string {
+  if (locale === "en") {
+    return THEME_TAGLINES_EN[theme.id] || theme.tagline;
+  }
+  return theme.tagline;
+}
+
 export function hexToRgbTriplet(hex: string): string {
   const clean = hex.replace("#", "").trim();
   const full =
