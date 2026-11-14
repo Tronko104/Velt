@@ -34,6 +34,12 @@ import {
 import { STRINGS, resolveLocale, type AppLocale } from "./i18n";
 import { matchesShortcut } from "./keybindings";
 import {
+  extractAtFileTokens,
+  extractFileLinkMatches,
+  matchActiveAtQuery,
+} from "./links";
+import { redactSensitiveText } from "./redact";
+import {
   collectPaneIds,
   countPanes,
   findDirectionalNeighbor,
@@ -155,6 +161,9 @@ interface TabState {
   containerEl: HTMLDivElement;
   rootNode: SplitNode;
   activePaneId: string;
+  hasNotice: boolean;
+  createdAt: number;
+  bgQuietTimer: number | null;
 }
 
 class VeltApp {
@@ -167,6 +176,7 @@ class VeltApp {
   private mainEl!: HTMLDivElement;
   private stageEl!: HTMLDivElement;
   private dropOverlayEl!: HTMLDivElement;
+  private atMenuEl!: HTMLDivElement;
   private agentDockEl!: HTMLDivElement;
   private agentInputEl!: HTMLTextAreaElement;
   private agentSendBtn!: HTMLButtonElement;
@@ -205,6 +215,11 @@ class VeltApp {
   private tabCounter = 0;
   private paneCounter = 0;
   private isDraggingSplitter = false;
+  private atMatches: string[] = [];
+  private atSelectedIdx = 0;
+  private atQueryStart = -1;
+  private atLookupTimer: number | null = null;
+  private existingPathCache = new Map<string, { exists: boolean; ts: number }>();
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -288,6 +303,8 @@ class VeltApp {
         <main class="velt-main" data-role="main">
           <div class="velt-term-stage" data-role="stage"></div>
 
+          <div class="velt-at-menu hidden" data-role="at-menu"></div>
+
           <div class="velt-agent-dock hidden" data-role="agent-dock">
             <div class="velt-think-live hidden" data-role="think-live">
               <span class="velt-think-badge">${iconThink(13)} <span data-role="think-badge-label">${escapeHtml(t.dock.thinkingBadge)}</span></span>
@@ -364,6 +381,7 @@ class VeltApp {
     this.mainEl = this.root.querySelector('[data-role="main"]')!;
     this.stageEl = this.root.querySelector('[data-role="stage"]')!;
     this.dropOverlayEl = this.root.querySelector('[data-role="drop-overlay"]')!;
+    this.atMenuEl = this.root.querySelector('[data-role="at-menu"]')!;
     this.agentDockEl = this.root.querySelector('[data-role="agent-dock"]')!;
     this.agentInputEl = this.root.querySelector('[data-role="agent-input"]')!;
     this.agentSendBtn = this.root.querySelector('[data-action="agent-send"]')!;
@@ -497,11 +515,40 @@ class VeltApp {
     this.agentSendBtn.addEventListener("click", () => void this.submitAgentPrompt());
     this.agentStopBtn.addEventListener("click", () => void this.cancelActiveTurn());
 
-    this.agentInputEl.addEventListener("input", () => this.autoSizeTextarea());
+    this.agentInputEl.addEventListener("input", () => {
+      this.autoSizeTextarea();
+      this.scheduleAtAutocomplete();
+    });
     this.agentInputEl.addEventListener("keydown", (e) => {
       if (e.isComposing || e.keyCode === 229) return;
       const pane = this.activePane();
       if (!pane) return;
+
+      if (this.isAtMenuOpen()) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          this.atSelectedIdx = (this.atSelectedIdx + 1) % this.atMatches.length;
+          this.renderAtMenu();
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          this.atSelectedIdx = (this.atSelectedIdx - 1 + this.atMatches.length) % this.atMatches.length;
+          this.renderAtMenu();
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey)) {
+          e.preventDefault();
+          this.applyAtSelection(this.atSelectedIdx);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          this.closeAtMenu();
+          return;
+        }
+      }
 
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
@@ -568,6 +615,13 @@ class VeltApp {
     window.addEventListener("mousedown", (e) => {
       if (this.contextMenuEl && !this.contextMenuEl.contains(e.target as Node)) {
         this.closeContextMenu();
+      }
+      if (
+        this.isAtMenuOpen() &&
+        !this.atMenuEl.contains(e.target as Node) &&
+        e.target !== this.agentInputEl
+      ) {
+        this.closeAtMenu();
       }
     });
 
@@ -733,6 +787,19 @@ class VeltApp {
       return;
     }
 
+    if (
+      e.ctrlKey &&
+      !e.shiftKey &&
+      !e.altKey &&
+      !e.metaKey &&
+      e.key.toLowerCase() === "w"
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      void this.closeActiveContextWindow();
+      return;
+    }
+
     if (matchesShortcut(e, kb.close_tab)) {
       e.preventDefault();
       e.stopPropagation();
@@ -885,6 +952,7 @@ class VeltApp {
       matchesShortcut(e, kb.close_tab) ||
       matchesShortcut(e, kb.open_settings) ||
       (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "t") ||
+      (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "w") ||
       (e.ctrlKey &&
         e.shiftKey &&
         !e.altKey &&
@@ -898,6 +966,40 @@ class VeltApp {
       (e.ctrlKey && !e.altKey && ["=", "+", "-", "0"].includes(e.key)) ||
       (e.ctrlKey && e.shiftKey && ["f", "c", "v", "l"].includes(e.key.toLowerCase()))
     );
+  }
+
+  private async closeActiveContextWindow(): Promise<void> {
+    const tab = this.activeTab();
+    if (!tab) {
+      await getCurrentWindow().close();
+      return;
+    }
+    if (countPanes(tab.rootNode) > 1) {
+      const pane = this.activePane();
+      if (pane) await this.closePane(pane.id);
+      return;
+    }
+    if (this.tabOrder.length > 1) {
+      await this.closeTab(tab.id);
+      return;
+    }
+
+    if (tab.bgQuietTimer !== null) {
+      window.clearTimeout(tab.bgQuietTimer);
+      tab.bgQuietTimer = null;
+    }
+    for (const pid of collectPaneIds(tab.rootNode)) {
+      const pane = this.panes.get(pid);
+      if (!pane) continue;
+      if (pane.isStreaming) {
+        await invoke("opencode_cancel_turn", {
+          overrideBin: this.config.opencode_bin || null,
+          tabId: pane.id,
+        }).catch(() => undefined);
+      }
+      await invoke("pty_kill", { tabId: pane.id }).catch(() => undefined);
+    }
+    await getCurrentWindow().close();
   }
 
   private async pasteIntoPane(pane: PaneState, preferPrimary: boolean): Promise<void> {
@@ -1212,6 +1314,25 @@ class VeltApp {
       } else {
         pane.term.write(event.payload.data);
       }
+
+      const tab = this.tabs.get(pane.tabId);
+      if (
+        tab &&
+        tab.id !== this.activeTabId &&
+        Date.now() - tab.createdAt > 1500 &&
+        event.payload.data.trim().length > 0
+      ) {
+        if (tab.bgQuietTimer !== null) {
+          window.clearTimeout(tab.bgQuietTimer);
+        }
+        tab.bgQuietTimer = window.setTimeout(() => {
+          tab.bgQuietTimer = null;
+          if (this.activeTabId !== tab.id && !tab.hasNotice) {
+            tab.hasNotice = true;
+            this.renderTabs();
+          }
+        }, 1100);
+      }
     });
 
     await listen<PtyExitPayload>("pty:exit", (event) => {
@@ -1406,6 +1527,10 @@ class VeltApp {
         pane.streamStartedAt = null;
         pane.streamWriter = null;
         pane.lastTokensOut = null;
+        if (pane.tabId !== this.activeTabId) {
+          const bgTab = this.tabs.get(pane.tabId);
+          if (bgTab) bgTab.hasNotice = true;
+        }
         this.updateModeUI();
         this.renderTabs();
         this.updateStatusBar();
@@ -1423,6 +1548,10 @@ class VeltApp {
         pane.thinkStartedAt = null;
         pane.streamStartedAt = null;
         pane.streamWriter = null;
+        if (pane.tabId !== this.activeTabId) {
+          const bgTab = this.tabs.get(pane.tabId);
+          if (bgTab) bgTab.hasNotice = true;
+        }
         this.updateModeUI();
         this.renderTabs();
         this.updateStatusBar();
@@ -1586,6 +1715,79 @@ class VeltApp {
 
     this.syncPaneWebgl(pane, this.config.webgl_renderer !== false);
 
+    term.registerLinkProvider({
+      provideLinks: (bufferLineNumber, callback) => {
+        const lineObj = term.buffer.active.getLine(bufferLineNumber - 1);
+        if (!lineObj) {
+          callback(undefined);
+          return;
+        }
+        const lineText = lineObj.translateToString(true);
+        const candidates = extractFileLinkMatches(lineText);
+        if (candidates.length === 0) {
+          callback(undefined);
+          return;
+        }
+
+        const now = Date.now();
+        const uncached: string[] = [];
+        for (const c of candidates) {
+          const cacheKey = `${pane.cwd}\0${c.path}`;
+          const hit = this.existingPathCache.get(cacheKey);
+          if (!hit || now - hit.ts > 5000) {
+            if (!uncached.includes(c.path)) uncached.push(c.path);
+          }
+        }
+
+        const emitLinks = () => {
+          const links = candidates
+            .filter((c) => this.existingPathCache.get(`${pane.cwd}\0${c.path}`)?.exists)
+            .map((c) => ({
+              range: {
+                start: { x: c.startIndex + 1, y: bufferLineNumber },
+                end: { x: c.endIndex, y: bufferLineNumber },
+              },
+              text: c.text,
+              activate: () => {
+                void invoke("open_file_path", {
+                  cwd: pane.cwd,
+                  path: c.path,
+                  line: c.line ?? null,
+                  col: c.col ?? null,
+                }).catch((err) => {
+                  this.showToast(STRINGS[this.currentLocale].toasts.fileOpenError(String(err)));
+                });
+              },
+            }));
+          callback(links.length > 0 ? links : undefined);
+        };
+
+        if (uncached.length === 0) {
+          emitLinks();
+          return;
+        }
+
+        void invoke<boolean[]>("filter_existing_paths", {
+          cwd: pane.cwd,
+          paths: uncached,
+        })
+          .then((flags) => {
+            if (this.existingPathCache.size > 500) {
+              this.existingPathCache.clear();
+            }
+            const ts = Date.now();
+            uncached.forEach((p, idx) => {
+              this.existingPathCache.set(`${pane.cwd}\0${p}`, {
+                exists: Boolean(flags[idx]),
+                ts,
+              });
+            });
+            emitLinks();
+          })
+          .catch(() => callback(undefined));
+      },
+    });
+
     leafEl.addEventListener("mousedown", () => {
       if (this.activePane()?.id !== pane.id) {
         this.focusPane(pane.id, false);
@@ -1702,6 +1904,9 @@ class VeltApp {
       containerEl,
       rootNode: { kind: "leaf", paneId: pane.id },
       activePaneId: pane.id,
+      hasNotice: false,
+      createdAt: Date.now(),
+      bgQuietTimer: null,
     };
 
     this.tabs.set(tabId, tab);
@@ -1916,6 +2121,13 @@ class VeltApp {
     const tab = this.tabs.get(id);
     if (!tab) return;
     this.activeTabId = id;
+    this.closeAtMenu();
+
+    if (tab.bgQuietTimer !== null) {
+      window.clearTimeout(tab.bgQuietTimer);
+      tab.bgQuietTimer = null;
+    }
+    tab.hasNotice = false;
 
     for (const [tid, t] of this.tabs) {
       t.containerEl.classList.toggle("active", tid === id);
@@ -1942,6 +2154,10 @@ class VeltApp {
   private async closeTab(id: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    if (tab.bgQuietTimer !== null) {
+      window.clearTimeout(tab.bgQuietTimer);
+      tab.bgQuietTimer = null;
+    }
 
     const paneIds = collectPaneIds(tab.rootNode);
     for (const pid of paneIds) {
@@ -2046,6 +2262,7 @@ class VeltApp {
         this.agentInputEl.focus();
       });
     } else {
+      this.closeAtMenu();
       pane.term.options.theme = toXtermTheme(
         getThemeById(this.config.theme),
         "shell",
@@ -2135,6 +2352,7 @@ class VeltApp {
     const pane = this.activePane();
     if (!pane || pane.isStreaming) return;
 
+    this.closeAtMenu();
     const raw = this.agentInputEl.value.trim();
     if (!raw) return;
 
@@ -2163,9 +2381,26 @@ class VeltApp {
           `  ${CYAN}${kb.cycle_effort}${RESET}        ${t.terminal.helpEffort}\r\n` +
           `  ${CYAN}${kb.insert_command}${RESET}    ${t.terminal.helpInsert}\r\n` +
           `  ${CYAN}${kb.select_all}${RESET}        ${t.terminal.helpSelectAll}\r\n` +
+          `  ${CYAN}/fix${RESET} · ${CYAN}/explain${RESET}   ${t.terminal.helpFixExplain}\r\n` +
+          `  ${CYAN}@file${RESET}            ${t.terminal.helpAtFile}\r\n` +
           `  ${CYAN}/new${RESET} · ${CYAN}/clear${RESET}       ${t.terminal.helpSession}\r\n\r\n`
       );
       return;
+    }
+
+    let effectiveRequest = raw;
+    let selectionSnippet = "";
+    const isFixCmd = raw === "/fix" || raw.startsWith("/fix ");
+    const isExplainCmd = raw === "/explain" || raw.startsWith("/explain ");
+    if (isFixCmd) {
+      const extra = raw.slice(4).trim();
+      effectiveRequest = t.terminal.fixPrompt(extra);
+    } else if (isExplainCmd) {
+      const extra = raw.slice(8).trim();
+      effectiveRequest = t.terminal.explainPrompt(extra);
+      if (pane.term.hasSelection()) {
+        selectionSnippet = pane.term.getSelection().trim().slice(0, 4000);
+      }
     }
 
     pane.promptHistory.push(raw);
@@ -2184,12 +2419,50 @@ class VeltApp {
     }
 
     const redactEnabled = this.config.redact_secrets !== false;
-    const ctxResult = pane.includeContext
-      ? extractRecentContext(pane.term, this.config.context_lines, redactEnabled)
-      : { text: "", redactedCount: 0 };
-    const recentCtx = ctxResult.text;
-    if (ctxResult.redactedCount > 0) {
-      this.showToast(t.toasts.secretsRedacted(ctxResult.redactedCount));
+    let totalRedacted = 0;
+    const contextBlocks: string[] = [];
+
+    if (selectionSnippet) {
+      const cleanSel = redactEnabled
+        ? redactSensitiveText(selectionSnippet)
+        : { text: selectionSnippet, redactedCount: 0 };
+      totalRedacted += cleanSel.redactedCount;
+      contextBlocks.push(`[Selected Terminal Output — cwd: ${pane.cwd}]\n\`\`\`\n${cleanSel.text}\n\`\`\``);
+    }
+
+    const wantRecentCtx = pane.includeContext || isFixCmd || (isExplainCmd && !selectionSnippet);
+    if (wantRecentCtx) {
+      const ctxResult = extractRecentContext(pane.term, this.config.context_lines, redactEnabled);
+      totalRedacted += ctxResult.redactedCount;
+      if (ctxResult.text.length > 0) {
+        contextBlocks.push(`[Terminal Context — cwd: ${pane.cwd}]\n\`\`\`\n${ctxResult.text}\n\`\`\``);
+      }
+    }
+
+    const atTokens = extractAtFileTokens(raw);
+    let attachedCount = 0;
+    for (const token of atTokens) {
+      try {
+        const fileText = await invoke<string>("read_context_file", {
+          cwd: pane.cwd,
+          relPath: token,
+        });
+        const cleanFile = redactEnabled
+          ? redactSensitiveText(fileText)
+          : { text: fileText, redactedCount: 0 };
+        totalRedacted += cleanFile.redactedCount;
+        contextBlocks.push(`[File: ${token}]\n\`\`\`\n${cleanFile.text}\n\`\`\``);
+        attachedCount += 1;
+      } catch {
+        // Ignore missing, oversized, or binary @tokens cleanly
+      }
+    }
+
+    if (attachedCount > 0) {
+      this.showToast(t.toasts.filesAttached(attachedCount));
+    }
+    if (totalRedacted > 0) {
+      this.showToast(t.toasts.secretsRedacted(totalRedacted));
     }
 
     pane.term.write(
@@ -2198,15 +2471,15 @@ class VeltApp {
         pane.effort,
         pane.cwd,
         raw,
-        recentCtx.length > 0
+        contextBlocks.length > 0
       )
     );
     pane.term.scrollToBottom();
 
     const fullPrompt =
-      recentCtx.length > 0
-        ? `[Terminal Context — cwd: ${pane.cwd}]\n\`\`\`\n${recentCtx}\n\`\`\`\n\nUser request:\n${raw}`
-        : raw;
+      contextBlocks.length > 0
+        ? `${contextBlocks.join("\n\n")}\n\nUser request:\n${effectiveRequest}`
+        : effectiveRequest;
 
     pane.isStreaming = true;
     pane.isThinking = false;
@@ -2240,6 +2513,109 @@ class VeltApp {
       this.updateModeUI();
       this.renderTabs();
     }
+  }
+
+  private isAtMenuOpen(): boolean {
+    return Boolean(this.atMenuEl && !this.atMenuEl.classList.contains("hidden") && this.atMatches.length > 0);
+  }
+
+  private closeAtMenu(): void {
+    if (this.atLookupTimer !== null) {
+      window.clearTimeout(this.atLookupTimer);
+      this.atLookupTimer = null;
+    }
+    this.atMatches = [];
+    this.atSelectedIdx = 0;
+    this.atQueryStart = -1;
+    if (this.atMenuEl) {
+      this.atMenuEl.classList.add("hidden");
+      this.atMenuEl.innerHTML = "";
+    }
+  }
+
+  private scheduleAtAutocomplete(): void {
+    const match = matchActiveAtQuery(
+      this.agentInputEl.value,
+      this.agentInputEl.selectionStart ?? this.agentInputEl.value.length
+    );
+    if (!match) {
+      this.closeAtMenu();
+      return;
+    }
+    this.atQueryStart = match.start;
+    if (this.atLookupTimer !== null) {
+      window.clearTimeout(this.atLookupTimer);
+    }
+    this.atLookupTimer = window.setTimeout(() => {
+      this.atLookupTimer = null;
+      void this.refreshAtMenu(match.query, match.start);
+    }, 65);
+  }
+
+  private async refreshAtMenu(query: string, expectedStart: number): Promise<void> {
+    const pane = this.activePane();
+    if (!pane || pane.mode !== "agent") {
+      this.closeAtMenu();
+      return;
+    }
+    try {
+      const files = await invoke<string[]>("list_workspace_files", {
+        cwd: pane.cwd,
+        query,
+      });
+      const current = matchActiveAtQuery(
+        this.agentInputEl.value,
+        this.agentInputEl.selectionStart ?? this.agentInputEl.value.length
+      );
+      if (!current || current.start !== expectedStart || files.length === 0) {
+        this.closeAtMenu();
+        return;
+      }
+      this.atQueryStart = current.start;
+      this.atMatches = files;
+      this.atSelectedIdx = 0;
+      this.renderAtMenu();
+    } catch {
+      this.closeAtMenu();
+    }
+  }
+
+  private renderAtMenu(): void {
+    if (this.atMatches.length === 0) {
+      this.closeAtMenu();
+      return;
+    }
+    this.atMenuEl.innerHTML = "";
+    this.atMatches.forEach((relPath, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `velt-at-item ${idx === this.atSelectedIdx ? "active" : ""}`;
+      btn.textContent = `@${relPath}`;
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.applyAtSelection(idx);
+      });
+      this.atMenuEl.appendChild(btn);
+    });
+    this.atMenuEl.classList.remove("hidden");
+  }
+
+  private applyAtSelection(index: number): void {
+    const chosen = this.atMatches[index];
+    if (!chosen || this.atQueryStart < 0) {
+      this.closeAtMenu();
+      return;
+    }
+    const cursor = this.agentInputEl.selectionStart ?? this.agentInputEl.value.length;
+    const before = this.agentInputEl.value.slice(0, this.atQueryStart);
+    const after = this.agentInputEl.value.slice(cursor);
+    const insert = `@${chosen} `;
+    this.agentInputEl.value = before + insert + after;
+    const nextPos = before.length + insert.length;
+    this.agentInputEl.setSelectionRange(nextPos, nextPos);
+    this.closeAtMenu();
+    this.autoSizeTextarea();
+    this.agentInputEl.focus();
   }
 
   private async cancelActiveTurn(): Promise<void> {
@@ -2497,8 +2873,9 @@ class VeltApp {
       const baseTitle = activePane?.title || "shell";
       const tabTitle = paneIds.length > 1 ? `${baseTitle} (${paneIds.length})` : baseTitle;
 
+      const hasNotice = tab.hasNotice && id !== this.activeTabId;
       const btn = document.createElement("div");
-      btn.className = `velt-tab ${id === this.activeTabId ? "active" : ""} ${anyAgent ? "agent-active" : ""} ${anyStreaming ? "streaming" : ""}`;
+      btn.className = `velt-tab ${id === this.activeTabId ? "active" : ""} ${anyAgent ? "agent-active" : ""} ${anyStreaming ? "streaming" : ""} ${hasNotice ? "notice" : ""}`;
       btn.title = termStrings.tabTooltip(tabTitle, index);
       btn.innerHTML = `
         <span class="velt-tab-dot"></span>

@@ -103,6 +103,8 @@ export interface I18nStrings {
     commandInserted: string;
     effortChanged: (effort: string) => string;
     settingsSaved: string;
+    filesAttached: (count: number) => string;
+    fileOpenError: (err: string) => string;
   };
   terminal: {
     paneClose: string;
@@ -120,6 +122,10 @@ export interface I18nStrings {
     helpInsert: string;
     helpSelectAll: string;
     helpSession: string;
+    helpFixExplain: string;
+    helpAtFile: string;
+    fixPrompt: (extra: string) => string;
+    explainPrompt: (extra: string) => string;
     tabTooltip: (title: string, idx: number) => string;
     closeTab: string;
   };
@@ -316,7 +322,7 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       hintNewlineKey: "Shift+Invio",
       hintReset: "reset",
       hintShell: "shell",
-      inputPlaceholder: "Parla con OpenCode (spiega un errore, genera un comando, modifica file)...",
+      inputPlaceholder: "Chiedi a OpenCode (@file per allegare file, /fix, /explain)...",
       stop: "Stop",
       send: "Invia",
       streamingThink: "Ragiono...",
@@ -367,6 +373,8 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       commandInserted: "Comando inserito nel prompt",
       effortChanged: (eff) => `Reasoning Effort -> ${eff}`,
       settingsSaved: "Impostazioni salvate",
+      filesAttached: (n) => (n === 1 ? "1 file allegato al turno" : `${n} file allegati al turno`),
+      fileOpenError: (err) => `Impossibile aprire il file: ${err}`,
     },
     terminal: {
       paneClose: "Chiudi riquadro",
@@ -385,6 +393,16 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       helpInsert: "Incolla comando suggerito nella shell",
       helpSelectAll: "Seleziona tutto il testo",
       helpSession: "Nuova sessione OpenCode / pulisci scrollback",
+      helpFixExplain: "Analizza l'ultimo errore o spiega l'output",
+      helpAtFile: "Allega un file della cartella al turno corrente",
+      fixPrompt: (extra) =>
+        extra
+          ? `Analizza l'errore o il problema nell'output recente del terminale e proponi la soluzione minima. Nota aggiuntiva: ${extra}`
+          : "Analizza l'errore o il problema nell'output recente del terminale e proponi la soluzione minima (e il comando pronto se utile).",
+      explainPrompt: (extra) =>
+        extra
+          ? `Spiega in modo chiaro e conciso cosa fa o significa questo output del terminale. Nota aggiuntiva: ${extra}`
+          : "Spiega in modo chiaro e conciso cosa fa o significa questo output del terminale.",
       tabTooltip: (title, idx) => (idx < 9 ? `${title} (Ctrl+${idx + 1})` : title),
       closeTab: "Chiudi tab",
     },
@@ -552,7 +570,7 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
           split_horizontal: ["Dividi riquadro in basso (Orizzontale)", "Apre una seconda shell sotto"],
           close_pane: ["Chiudi riquadro attivo", "Chiude il riquadro split corrente (o il tab se ultimo)"],
           new_tab: ["Nuovo Tab", "Apre una nuova shell (anche Ctrl+T)"],
-          close_tab: ["Chiudi Tab", "Chiude il tab corrente"],
+          close_tab: ["Chiudi Tab / Finestra", "Chiude il tab corrente (anche Ctrl+W chiude riquadro/tab/finestra)"],
           open_settings: ["Apri Impostazioni", "Mostra questa finestra"],
         },
       },
@@ -588,7 +606,7 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       hintNewlineKey: "Shift+Enter",
       hintReset: "reset",
       hintShell: "shell",
-      inputPlaceholder: "Ask OpenCode (explain an error, craft a command, edit files)...",
+      inputPlaceholder: "Ask OpenCode (@file to attach a file, /fix, /explain)...",
       stop: "Stop",
       send: "Send",
       streamingThink: "Thinking...",
@@ -639,6 +657,8 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       commandInserted: "Command pasted into prompt",
       effortChanged: (eff) => `Reasoning Effort -> ${eff}`,
       settingsSaved: "Settings saved",
+      filesAttached: (n) => (n === 1 ? "1 file attached for this turn" : `${n} files attached for this turn`),
+      fileOpenError: (err) => `Unable to open file: ${err}`,
     },
     terminal: {
       paneClose: "Close pane",
@@ -657,6 +677,16 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
       helpInsert: "Paste suggested command into shell",
       helpSelectAll: "Select all text",
       helpSession: "New OpenCode session / clear scrollback",
+      helpFixExplain: "Diagnose latest error or explain output",
+      helpAtFile: "Attach a workspace file for this turn",
+      fixPrompt: (extra) =>
+        extra
+          ? `Analyze the error or failure in the recent terminal output and propose the minimal fix. Extra note: ${extra}`
+          : "Analyze the error or failure in the recent terminal output and propose the minimal fix (with a ready-to-run command if helpful).",
+      explainPrompt: (extra) =>
+        extra
+          ? `Explain clearly and concisely what this terminal output or snippet does. Extra note: ${extra}`
+          : "Explain clearly and concisely what this terminal output or snippet does.",
       tabTooltip: (title, idx) => (idx < 9 ? `${title} (Ctrl+${idx + 1})` : title),
       closeTab: "Close tab",
     },
@@ -824,7 +854,7 @@ export const STRINGS: Record<AppLocale, I18nStrings> = {
           split_horizontal: ["Split pane down (Horizontal)", "Open a shell below"],
           close_pane: ["Close active pane", "Close current split pane (or tab if last)"],
           new_tab: ["New Tab", "Open a new shell (also Ctrl+T)"],
-          close_tab: ["Close Tab", "Close current tab"],
+          close_tab: ["Close Tab / Window", "Close current tab (Ctrl+W closes active pane, tab, or window)"],
           open_settings: ["Open Settings", "Show this dialog"],
         },
       },
