@@ -4,31 +4,39 @@ A **vibe-coded**, frameless Linux terminal emulator built with **Tauri v2**, **x
 
 > **Note**: This project is vibe-coded (developed iteratively with AI coding agents). Prebuilt Linux packages (`.AppImage`, `.deb`, `.rpm`) are published on the [Releases](https://github.com/Tronko104/Velt/releases) page.
 
+![Velt Terminal Preview](assets/preview.png)
+
 ## Key Features
 
-- **Unified Shell & Agent Scrollback**: No detached sidebars. Toggling Agent Mode switches the frame and cursor accent and renders OpenCode responses directly inside the terminal scrollback alongside your shell history. On exit, configurable exit modes (`commands_only`, `clean`, or `keep_all`) isolate executed shell commands or restore the pre-agent buffer cleanly.
-- **Split Panes & Tabs**: Recursive vertical and horizontal splits (`Ctrl+Shift+D`, `Ctrl+Shift+B`), directional pane navigation (`Ctrl+Shift+Arrows`), drag-to-resize splitters coalesced with `requestAnimationFrame`, and independent PTY and OpenCode sessions per pane.
+- **Unified Shell & Ephemeral Agent Scrollback**: No detached sidebars or persistent chat clutter. Toggling Agent Mode (`Ctrl+Shift+G` or `Ctrl+/`) switches the frame and cursor accent and renders OpenCode responses directly inside the terminal scrollback alongside your shell history. On exit (`Esc`), configurable exit modes (`commands_only`, `clean`, or `keep_all`) isolate executed shell commands or restore the pre-agent buffer cleanly.
+- **Fast Ephemeral Agent Shortcuts (`/fix`, `/explain`, `@file`)**:
+  - `/fix [note]`: Pulls recent terminal output (redacted if `redact_secrets` is enabled) and asks OpenCode for the minimal fix.
+  - `/explain [note]`: Explains your active terminal selection (or recent scrollback if nothing is selected).
+  - `@file`: Type `@` in the Agent Dock for lightweight workspace file autocomplete (`list_workspace_files`), attaching up to 5 referenced text files for that single turn only (oversized, missing, or binary files are skipped).
+- **Clickable `file:line[:col]` Links & URLs**: Terminal output and error stack traces containing existing relative, `~/`, or absolute file paths (with optional `:line[:col]`) become clickable links that open in `$VISUAL`/`$EDITOR` (GUI editors jump straight to line/column) or `xdg-open`, alongside standard web links.
+- **Split Panes, Tabs & Background Notice Dot**: Recursive vertical and horizontal splits (`Ctrl+Shift+D`, `Ctrl+Shift+B`), directional pane navigation (`Ctrl+Shift+Arrows`), drag-to-resize splitters coalesced with `requestAnimationFrame`, and a subtle green dot on inactive tabs when background output settles or an Agent turn finishes.
 - **Model & Reasoning Effort Quick Switcher**:
   - `Ctrl+Shift+M`: Search available OpenCode models, switch supported reasoning effort levels (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `thinking`), or pick presets.
   - `Ctrl+Shift+E`: Cycle reasoning effort on the active pane.
 - **Live Thinking Ticker & Agent Controls**: Real-time thinking ticker in the Agent Dock, optional scrollback reasoning display, and safe command insertion (`Ctrl+Shift+Enter`) that pastes suggested commands into your shell prompt **without auto-executing**.
-- **Automatic Secret Redaction**: Optional context sharing (`@context`) sends the current working directory and recent terminal lines to OpenCode. Enabled by default (`redact_secrets = true`), a built-in client-side filter masks common API keys, tokens (`sk-`, `ghp_`, `github_pat_`, `AKIA`, `AIza`, `xox*`, `Bearer`/`Basic`), PEM private keys, embedded URL credentials, and sensitive `KEY=VALUE` pairs before any context leaves the terminal.
+- **Automatic Secret Redaction**: Optional context sharing sends the current working directory, recent terminal lines, or `@file` attachments to OpenCode. Enabled by default (`redact_secrets = true`), a built-in client-side filter masks common API keys, tokens (`sk-`, `ghp_`, `github_pat_`, `AKIA`, `AIza`, `xox*`, `Bearer`/`Basic`), PEM private keys, embedded URL credentials, and sensitive `KEY=VALUE` pairs before any context leaves the terminal.
 - **Themes, Transparency & Native Linux Blur**:
   - 10 built-in themes (`Velt Obsidian`, `Tokyo Night`, `Catppuccin Mocha`, `Nord Arctic`, `Gruvbox Amber`, `Rosé Pine`, `Dracula Violet`, `Kanagawa Wave`, `Monokai Pro`, `Solarized Deep`) with live preview.
   - Configurable window opacity (`35%`-`100%`), backdrop styles (`aurora`, `subtle`, `flat`), and compositor blur (`ext_background_effect_v1` / legacy `org_kde_kwin_blur` on Wayland, `_KDE_NET_WM_BLUR_BEHIND_REGION` on X11) plus a live toggle for the xterm.js WebGL renderer (`webgl_renderer`) for WebKitGTK/Wayland compatibility.
 - **Bilingual In-App UI**: Automatic system locale detection (`LC_ALL`/`LC_MESSAGES`/`LANG` + browser locale) with live switching between **English** and **Italian** (`auto`, `en`, `it`).
-- **Terminal Ergonomics**: Bracketed paste, optional copy-on-select, Linux primary-selection middle-click paste (`wl-paste`/`xclip`/`xsel` with clipboard fallback), optional `focus_follows_mouse`, IME composition guards, drag-and-drop shell-quoted file paths, clickable URLs (`xdg-open`), and context-menu selection actions for OpenCode.
+- **Terminal Ergonomics**: Bracketed paste, optional copy-on-select, Linux primary-selection middle-click paste (`wl-paste`/`xclip`/`xsel` with clipboard fallback), optional `focus_follows_mouse`, IME composition guards, drag-and-drop shell-quoted file paths, and context-menu selection actions for OpenCode.
 
 ## Architecture & OpenCode Integration
 
 Velt splits responsibilities cleanly between a native Rust/Tauri backend (`src-tauri/src/`) and a TypeScript/Vite frontend (`src/`):
 
 - **PTY Management (`src-tauri/src/pty.rs`)**: Uses `portable-pty` keyed per `pane.id`, allowing every tab and split pane to run its own shell session with live `cwd` tracking, resize synchronization, and isolated scrollback.
+- **Workspace Context & File Links (`src-tauri/src/lib.rs`, `src/links.ts`)**: Provides bounded, binary-safe `@file` lookups (`list_workspace_files`, `read_context_file`) and cached scrollback path verification (`filter_existing_paths`, `open_file_path`) for xterm.js's custom `ILinkProvider`.
 - **OpenCode Hybrid Integration (`src-tauri/src/opencode.rs`)**:
   - Discovers or starts the local `opencode` HTTP service (`ensure_service`) and maintains a shared Server-Sent Events (SSE) listener on `/api/event` for token-level streaming (`reasoning_delta`, `text_delta`, `tool_start`, `tool_done`, and `usage`).
   - Pre-creates sessions via `POST /api/session` so SSE correlation starts from byte 0, and executes each prompt through `opencode-cli run --format json --thinking` with an automatic stdout JSON fallback if SSE is inactive.
   - Aborts active turns cleanly via `POST /api/session/{id}/abort` followed by `SIGTERM` on the child process when pressing `Esc` or clicking Stop.
-- **Client-Side Redaction & Snapshots (`src/redact.ts`, `src/ansi.ts`)**: Context lines extracted from xterm.js pass through `redactSensitiveText()` prior to IPC dispatch. Entering Agent Mode captures an ANSI buffer snapshot so exiting in `commands_only` or `clean` mode restores your prior shell state seamlessly.
+- **Client-Side Redaction & Snapshots (`src/redact.ts`, `src/ansi.ts`)**: Context lines and `@file` contents pass through `redactSensitiveText()` prior to IPC dispatch. Entering Agent Mode captures an ANSI buffer snapshot so exiting in `commands_only` or `clean` mode restores your prior shell state seamlessly.
 - **Compositor Blur (`src-tauri/src/blur.rs`, `src-tauri/src/blur_linux.c`)**: Interacts directly with `libwayland-client` and `libX11` via `raw-window-handle` to request native behind-window blur on supported Wayland and X11 compositors.
 
 ## Default Keybindings
@@ -45,6 +53,7 @@ All shortcuts can be customized in **Settings** (`Ctrl+,`) or directly in `~/.co
 - `Ctrl+Shift+X`: Close active pane
 - `Ctrl+Shift+Arrow`: Move focus to neighboring split pane
 - `Ctrl+T` / `Ctrl+Shift+T`: New tab (`Ctrl+Shift+W` closes current tab)
+- `Ctrl+W`: Close active split pane, active tab, or last Velt window
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: Switch to next / previous tab (`Ctrl+PageDown` / `Ctrl+PageUp`)
 - `Ctrl+1..9` / `Alt+1..9`: Jump directly to tab 1..9
 - `Ctrl+Shift+L`: Clear scrollback
@@ -93,11 +102,11 @@ npm install
 npm run tauri dev
 ```
 
-Build frontend assets, run TypeScript and Node tests, and compile the release binary:
+Build frontend assets, run TypeScript and Node tests, and compile the release binary (automated via `.github/workflows/ci.yml`):
 
 ```bash
 npm run build
-node --test tests/redact_and_i18n.test.ts
+node --test tests/*.test.ts
 (cd src-tauri && cargo test)
 npm run tauri build -- --no-bundle
 ```
